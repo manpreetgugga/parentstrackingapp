@@ -30,6 +30,23 @@ service cloud.firestore {
              .affectedKeys().hasOnly([request.auth.uid]);
     }
 
+    // pings/{id}: "Are you OK?" questions. Only someone allowed to see a person can ask them.
+    match /pings/{id} {
+      allow create: if signedIn()
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.keys().hasOnly(['from', 'fromName', 'to', 'type', 'createdAt'])
+        && request.auth.uid in get(/databases/$(database)/documents/locations/$(request.resource.data.to)).data.viewers;
+
+      allow read, delete: if signedIn()
+        && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+
+      // The person asked may answer once, and change nothing else.
+      allow update: if signedIn()
+        && resource.data.to == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['response', 'respondedAt'])
+        && request.resource.data.response in ['OK', 'CALL_ME'];
+    }
+
     // invites/{code}: a request from one person to another, answered by the invitee.
     match /invites/{code} {
       // Anyone signed in who knows the 6-character code can open that one invite...

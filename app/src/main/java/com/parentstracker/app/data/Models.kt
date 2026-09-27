@@ -57,6 +57,8 @@ data class Member(
     val sosAt: Long = 0,
     val checkInMessage: String? = null,
     val checkInAt: Long = 0,
+    val trail: List<TrailPoint> = emptyList(),
+    val medical: MedicalInfo? = null,
     val isDemo: Boolean = false,
 ) {
     val displayName: String get() = nickname?.takeIf { it.isNotBlank() } ?: name
@@ -86,10 +88,71 @@ data class MemberLabel(
     val phone: String? = null,
 )
 
+/** One point of someone's path over the last 24 hours. */
+data class TrailPoint(
+    val lat: Double,
+    val lng: Double,
+    val time: Long,
+    val address: String? = null,
+)
+
+/** Emergency details a person chooses to share with their family. */
+data class MedicalInfo(
+    val bloodGroup: String = "",
+    val conditions: String = "",
+    val allergies: String = "",
+    val medicines: String = "",
+    val doctorName: String = "",
+    val doctorPhone: String = "",
+) {
+    val isEmpty: Boolean
+        get() = listOf(bloodGroup, conditions, allergies, medicines, doctorName, doctorPhone).all { it.isBlank() }
+
+    /** One line for SOS texts, e.g. "Blood group O+ · Allergies: penicillin". */
+    fun summary(): String = listOfNotNull(
+        bloodGroup.takeIf { it.isNotBlank() }?.let { "Blood group $it" },
+        conditions.takeIf { it.isNotBlank() }?.let { "Conditions: $it" },
+        allergies.takeIf { it.isNotBlank() }?.let { "Allergies: $it" },
+        medicines.takeIf { it.isNotBlank() }?.let { "Medicines: $it" },
+        listOf(doctorName, doctorPhone).filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }
+            ?.let { "Doctor: ${it.joinToString(" ")}" },
+    ).joinToString(" · ")
+}
+
+enum class ReminderType { MEDICINE, CHECK_IN }
+
+data class Reminder(
+    val id: String,
+    val label: String,
+    val hour: Int,
+    val minute: Int,
+    val type: ReminderType,
+    val enabled: Boolean = true,
+)
+
+enum class PingResponse(val message: String) {
+    OK("I'm OK 👍"),
+    CALL_ME("Please call me 📞"),
+}
+
+/** An "Are you OK?" request from one family member to another. */
+data class Ping(
+    val id: String,
+    val from: String,
+    val fromName: String,
+    val to: String,
+    val createdAt: Long,
+    val response: PingResponse? = null,
+    val respondedAt: Long = 0,
+)
+
 sealed interface AppEvent {
     data class InviteAccepted(val name: String) : AppEvent
+    data class PingAnswered(val name: String, val response: PingResponse) : AppEvent
 }
 
 val RELATIONS = listOf("Mom", "Dad", "Grandma", "Grandpa", "Son", "Daughter", "Spouse", "Sibling", "Friend", "Other")
 
 val CHECK_IN_MESSAGES = listOf("I'm OK 👍", "Reached home 🏠", "On my way 🚶", "Please call me 📞")
+
+val BLOOD_GROUPS = listOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")

@@ -20,11 +20,14 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -51,16 +54,35 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
 }
 
 @Composable
-fun ParentsTrackerRoot(pendingJoinCode: StateFlow<String?>, onJoinCodeHandled: () -> Unit) {
+fun ParentsTrackerRoot(
+    pendingJoinCode: StateFlow<String?>,
+    onJoinCodeHandled: () -> Unit,
+    pendingSos: StateFlow<Boolean>,
+    onSosHandled: () -> Unit,
+) {
     val vm: AppViewModel = viewModel()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val sos by pendingSos.collectAsStateWithLifecycle()
+    LaunchedEffect(sos) {
+        if (sos) {
+            vm.requestSos()
+            onSosHandled()
+        }
+    }
     val current = settings
-    when {
-        current == null -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
-        !current.onboardingDone -> OnboardingScreen(vm)
-        else -> MainScaffold(vm, pendingJoinCode, onJoinCodeHandled)
+    // Senior mode: all text one size larger, for parents' phones.
+    val density = LocalDensity.current
+    val scaled = if (current?.seniorMode == true) Density(density.density, density.fontScale * SENIOR_FONT_SCALE) else density
+    CompositionLocalProvider(LocalDensity provides scaled) {
+        when {
+            current == null -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+            !current.onboardingDone -> OnboardingScreen(vm)
+            else -> MainScaffold(vm, pendingJoinCode, onJoinCodeHandled)
+        }
     }
 }
+
+private const val SENIOR_FONT_SCALE = 1.25f
 
 /** Switches bottom-bar tab, keeping each tab's state. Pass restore = false when the route carries new arguments. */
 private fun NavHostController.switchTab(route: String, restore: Boolean = true) = navigate(route) {
@@ -76,6 +98,10 @@ private fun MainScaffold(vm: AppViewModel, pendingJoinCode: StateFlow<String?>, 
     val route = backStack?.destination?.route
     val snackbar = remember { SnackbarHostState() }
     val joinCode by pendingJoinCode.collectAsStateWithLifecycle()
+    val sosRequested by vm.sosRequested.collectAsStateWithLifecycle()
+    LaunchedEffect(sosRequested) {
+        if (sosRequested) nav.switchTab(Tab.HOME.route)
+    }
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     LaunchedEffect(joinCode) {

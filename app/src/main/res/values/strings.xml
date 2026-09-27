@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Parents Tracker</string>
+    <string name="widget_ok">I\'m OK</string>
+    <string name="widget_sos">SOS</string>
+    <string name="widget_status_default">Tap to tell your family you\'re OK</string>
+    <string name="widget_description">One tap to check in or ask for help</string>
 </resources>

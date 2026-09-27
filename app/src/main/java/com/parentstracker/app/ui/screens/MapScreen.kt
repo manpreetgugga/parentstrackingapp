@@ -64,13 +64,16 @@ import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.parentstracker.app.data.DemoData
 import com.parentstracker.app.data.Member
 import com.parentstracker.app.data.UserSettings
 import com.parentstracker.app.ui.AppViewModel
 import com.parentstracker.app.ui.components.Avatar
+import com.parentstracker.app.ui.components.MedicalInfoDialog
 import com.parentstracker.app.ui.components.MemberCard
+import com.parentstracker.app.ui.components.TrailSheet
 import com.parentstracker.app.ui.components.SectionHeader
 import com.parentstracker.app.ui.components.avatarColor
 import com.parentstracker.app.ui.components.memberStatus
@@ -88,7 +91,7 @@ fun MapScreen(vm: AppViewModel, focusUid: String?) {
     val s = settings ?: return
     val members by vm.members.collectAsStateWithLifecycle()
     if (vm.mapsConfigured) {
-        LiveMap(s, members, focusUid)
+        LiveMap(vm, s, members, focusUid)
     } else {
         MapSetupPlaceholder(s, members)
     }
@@ -191,7 +194,7 @@ private fun OpenInMapsRow(name: String, seed: String, subtitle: String, onClick:
 }
 
 @Composable
-private fun LiveMap(s: UserSettings, members: List<Member>, focusUid: String?) {
+private fun LiveMap(vm: AppViewModel, s: UserSettings, members: List<Member>, focusUid: String?) {
     val context = LocalContext.current
     val perms = rememberPermissionSnapshot()
     val now = rememberNow()
@@ -215,6 +218,8 @@ private fun LiveMap(s: UserSettings, members: List<Member>, focusUid: String?) {
     }
     var mapLoaded by remember { mutableStateOf(false) }
     var selected by rememberSaveable(focusUid) { mutableStateOf(focusUid) }
+    var trailFor by remember { mutableStateOf<Member?>(null) }
+    var medicalFor by remember { mutableStateOf<Member?>(null) }
 
     fun fitEveryone() {
         val points = listOfNotNull(positionOf(ME)) + located.mapNotNull { m -> m.location?.let { LatLng(it.lat, it.lng) } }
@@ -257,6 +262,14 @@ private fun LiveMap(s: UserSettings, members: List<Member>, focusUid: String?) {
                     strokeColor = placeColor,
                     strokeWidth = 3f,
                 )
+            }
+            // The selected person's path over the last 24 hours.
+            members.firstOrNull { it.uid == selected }?.let { member ->
+                val path = member.trail.map { LatLng(it.lat, it.lng) } +
+                    listOfNotNull(member.location?.let { LatLng(it.lat, it.lng) })
+                if (path.size > 1) {
+                    Polyline(points = path, color = avatarColor(member.uid), width = 10f, geodesic = true)
+                }
             }
             located.forEach { member ->
                 val l = member.location!!
@@ -314,6 +327,9 @@ private fun LiveMap(s: UserSettings, members: List<Member>, focusUid: String?) {
                     onDirections = l?.let { { Intents.directions(context, it.lat, it.lng) } },
                     onShowOnMap = null,
                     modifier = Modifier.padding(horizontal = 12.dp),
+                    onPing = { vm.sendPing(selectedMember) },
+                    onTrail = { trailFor = selectedMember },
+                    onMedical = { medicalFor = selectedMember },
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -341,6 +357,11 @@ private fun LiveMap(s: UserSettings, members: List<Member>, focusUid: String?) {
                 }
             }
         }
+    }
+
+    trailFor?.let { member -> TrailSheet(member, s.places, now, onDismiss = { trailFor = null }) }
+    medicalFor?.let { member ->
+        member.medical?.let { info -> MedicalInfoDialog(member.displayName, info, onDismiss = { medicalFor = null }) }
     }
 }
 

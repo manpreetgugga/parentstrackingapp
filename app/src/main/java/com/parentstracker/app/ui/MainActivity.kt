@@ -14,15 +14,21 @@ class MainActivity : ComponentActivity() {
     /** Invite code from a parentstracker://join?code=... link, waiting to be opened. */
     private val pendingJoinCode = MutableStateFlow<String?>(null)
 
+    /** The home-screen widget's SOS button opens parentstracker://sos. */
+    private val pendingSos = MutableStateFlow(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        handleIntent(intent)
+        // Only on first launch; after a rotation the link has already been handled.
+        if (savedInstanceState == null) handleIntent(intent)
         setContent {
             ParentsTrackerTheme {
                 ParentsTrackerRoot(
                     pendingJoinCode = pendingJoinCode,
                     onJoinCodeHandled = { pendingJoinCode.value = null },
+                    pendingSos = pendingSos,
+                    onSosHandled = { pendingSos.value = false },
                 )
             }
         }
@@ -36,8 +42,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme == "parentstracker" && data.host == "join") {
-            pendingJoinCode.value = InviteCodes.normalize(data.getQueryParameter("code").orEmpty())
+        if (data.scheme != "parentstracker") return
+        when (data.host) {
+            "join" -> pendingJoinCode.value = InviteCodes.normalize(data.getQueryParameter("code").orEmpty())
+            "sos" -> pendingSos.value = true
         }
     }
 }

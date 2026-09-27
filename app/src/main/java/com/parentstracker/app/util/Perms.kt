@@ -31,6 +31,11 @@ object Perms {
             true
         }
 
+    /** Whether reminders can fire at the exact minute (Android 12+ "Alarms & reminders"). */
+    fun hasExactAlarms(context: Context) =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            context.getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() == true
+
     /** Asked for together: precise + approximate location, and notifications on Android 13+. */
     val foregroundRequest: Array<String> = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)

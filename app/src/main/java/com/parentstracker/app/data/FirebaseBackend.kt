@@ -158,6 +158,57 @@ class FirebaseBackend : CloudBackend {
         }
     }
 
+    override val incomingPings: Flow<List<Ping>> = pingsWhere("to")
+
+    override val outgoingPings: Flow<List<Ping>> = pingsWhere("from")
+
+    private fun pingsWhere(field: String): Flow<List<Ping>> = uid.flatMapLatest { me ->
+        if (me == null) {
+            flowOf(emptyList())
+        } else {
+            callbackFlow {
+                val registration = db.collection(PINGS)
+                    .whereEqualTo(field, me)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            reportError(error)
+                            close(error)
+                            return@addSnapshotListener
+                        }
+                        trySend(snapshot?.documents.orEmpty().mapNotNull { it.toPing() }.sortedByDescending { it.createdAt })
+                    }
+                awaitClose { registration.remove() }
+            }.retryOnError()
+        }
+    }
+
+    override suspend fun sendPing(to: String, fromName: String) {
+        val me = requireUid()
+        db.collection(PINGS).add(
+            mapOf(
+                "from" to me,
+                "fromName" to fromName,
+                "to" to to,
+                "type" to "ARE_YOU_OK",
+                "createdAt" to System.currentTimeMillis(),
+            ),
+        ).await()
+    }
+
+    /** Doesn't wait for the server, so a reply from a notification works offline too. */
+    override suspend fun answerPing(id: String, response: PingResponse) {
+        requireUid()
+        db.collection(PINGS).document(id)
+            .update(mapOf("response" to response.name, "respondedAt" to System.currentTimeMillis()))
+            .addOnFailureListener { Log.w(TAG, "Answering ping failed", it) }
+    }
+
+    override suspend fun deletePing(id: String) {
+        requireUid()
+        db.collection(PINGS).document(id).delete()
+            .addOnFailureListener { Log.w(TAG, "Deleting ping failed", it) }
+    }
+
     /** Fire-and-forget: Firestore queues the write while offline and syncs it later. */
     override suspend fun publishState(update: MyStateUpdate) {
         val me = requireUid()
@@ -178,6 +229,22 @@ class FirebaseBackend : CloudBackend {
             update.sosAt?.let { put("sosAt", it) }
             update.checkInMessage?.let { put("checkIn", it) }
             update.checkInAt?.let { put("checkInAt", it) }
+            update.trail?.let { trail ->
+                put("trail", trail.map { p -> mapOf("lat" to p.lat, "lng" to p.lng, "t" to p.time, "a" to p.address) })
+            }
+            update.medical?.let { m ->
+                put(
+                    "medical",
+                    mapOf(
+                        "bloodGroup" to m.bloodGroup,
+                        "conditions" to m.conditions,
+                        "allergies" to m.allergies,
+                        "medicines" to m.medicines,
+                        "doctorName" to m.doctorName,
+                        "doctorPhone" to m.doctorPhone,
+                    ),
+                )
+            }
         }
         if (data.isEmpty()) return
         db.collection(LOCATIONS).document(me).set(data, SetOptions.merge())
@@ -313,8 +380,39 @@ class FirebaseBackend : CloudBackend {
             sosAt = getLong("sosAt") ?: 0L,
             checkInMessage = getString("checkIn"),
             checkInAt = getLong("checkInAt") ?: 0L,
+            trail = (get("trail") as? List<*>).orEmpty().mapNotNull { it.toTrailPoint() },
+            medical = (get("medical") as? Map<*, *>)?.let { m ->
+                MedicalInfo(
+                    bloodGroup = m["bloodGroup"] as? String ?: "",
+                    conditions = m["conditions"] as? String ?: "",
+                    allergies = m["allergies"] as? String ?: "",
+                    medicines = m["medicines"] as? String ?: "",
+                    doctorName = m["doctorName"] as? String ?: "",
+                    doctorPhone = m["doctorPhone"] as? String ?: "",
+                )
+            }?.takeUnless { it.isEmpty },
         )
     }
+
+    private fun Any?.toTrailPoint(): TrailPoint? {
+        val m = this as? Map<*, *> ?: return null
+        val lat = (m["lat"] as? Number)?.toDouble() ?: return null
+        val lng = (m["lng"] as? Number)?.toDouble() ?: return null
+        val time = (m["t"] as? Number)?.toLong() ?: return null
+        return TrailPoint(lat, lng, time, m["a"] as? String)
+    }
+
+    private fun DocumentSnapshot.toPing(): Ping? = runCatching {
+        Ping(
+            id = id,
+            from = getString("from")!!,
+            fromName = getString("fromName") ?: "Family",
+            to = getString("to")!!,
+            createdAt = getLong("createdAt") ?: 0L,
+            response = getString("response")?.let { r -> runCatching { PingResponse.valueOf(r) }.getOrNull() },
+            respondedAt = getLong("respondedAt") ?: 0L,
+        )
+    }.getOrNull()
 
     private fun DocumentSnapshot.toProfile(): MyCloudProfile {
         val viewerIds = (get(F_VIEWERS) as? List<*>)?.filterIsInstance<String>().orEmpty()
@@ -355,6 +453,7 @@ class FirebaseBackend : CloudBackend {
         const val TAG = "FirebaseBackend"
         const val LOCATIONS = "locations"
         const val INVITES = "invites"
+        const val PINGS = "pings"
         const val F_VIEWERS = "viewers"
         const val F_VIEWER_NAMES = "viewerNames"
     }

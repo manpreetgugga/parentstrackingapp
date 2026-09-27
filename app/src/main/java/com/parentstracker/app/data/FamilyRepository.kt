@@ -4,6 +4,7 @@ import android.location.Location
 import android.util.Log
 import com.parentstracker.app.location.LocationTracker
 import com.parentstracker.app.util.Geo
+import com.parentstracker.app.util.Trail
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -56,10 +57,22 @@ class FamilyRepository(
     val events: SharedFlow<AppEvent> = _events.asSharedFlow()
 
     private val handledInvites = mutableSetOf<String>()
+    private val handledPings = mutableSetOf<String>()
+
+    /** Unanswered "Are you OK?" pings sent to this user in the last day. */
+    val incomingPings: StateFlow<List<Ping>> = cloud.incomingPings
+        .map { list -> list.filter { it.response == null && System.currentTimeMillis() - it.createdAt < PING_TTL_MS } }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** Pings this user sent that are still waiting for a reply. */
+    val outgoingPings: StateFlow<List<Ping>> = cloud.outgoingPings
+        .map { list -> list.filter { it.response == null && System.currentTimeMillis() - it.createdAt < PING_TTL_MS } }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     fun start() {
         scope.launch { connect() }
         scope.launch { invites.collect { handleInviteResponses(it) } }
+        scope.launch { cloud.outgoingPings.collect { handlePingReplies(it) } }
         scope.launch {
             profile.filterNotNull().map { it.viewers.size }.distinctUntilChanged().collect { settings.setViewerCount(it) }
         }
@@ -70,7 +83,16 @@ class FamilyRepository(
         try {
             cloud.connect()
             val s = settings.current()
-            if (s.onboardingDone) cloud.publishState(MyStateUpdate(name = s.userName, sharing = s.sharingEnabled))
+            if (s.onboardingDone) {
+                cloud.publishState(
+                    MyStateUpdate(
+                        name = s.userName,
+                        sharing = s.sharingEnabled,
+                        medical = s.medical,
+                        trail = if (s.shareTrail) s.trail else emptyList(),
+                    ),
+                )
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Couldn't connect to family sync", e)
         }
@@ -120,8 +142,18 @@ class FamilyRepository(
             charging = battery.charging,
         )
         settings.setLastLocation(snapshot)
+        val trail = Trail.append(s.trail, TrailPoint(snapshot.lat, snapshot.lng, snapshot.timeMillis, snapshot.address))
+        val trailChanged = trail != s.trail
+        if (trailChanged) settings.setTrail(trail)
         if (s.sharingEnabled || forcePublish) {
-            publish(MyStateUpdate(name = s.userName, location = snapshot, sharing = s.sharingEnabled))
+            publish(
+                MyStateUpdate(
+                    name = s.userName,
+                    location = snapshot,
+                    sharing = s.sharingEnabled,
+                    trail = if (trailChanged && s.shareTrail) trail else null,
+                ),
+            )
         }
         return snapshot
     }
@@ -214,6 +246,55 @@ class FamilyRepository(
         }
     }
 
+    // ---- "Are you OK?" pings ----
+
+    suspend fun sendPing(member: Member): Result<Unit> = runCatching {
+        if (!cloud.isConfigured) throw CloudNotConfiguredException()
+        cloud.sendPing(member.uid, settings.current().userName)
+    }
+
+    /** Answers a ping and also posts the answer as a check-in, so every viewer sees it. */
+    suspend fun answerPing(pingId: String, response: PingResponse): Result<Unit> = runCatching {
+        cloud.answerPing(pingId, response)
+        checkIn(response.message)
+    }
+
+    private suspend fun handlePingReplies(pings: List<Ping>) {
+        val now = System.currentTimeMillis()
+        for (ping in pings) {
+            val response = ping.response
+            when {
+                response != null && handledPings.add(ping.id) -> {
+                    val name = members.value.firstOrNull { it.uid == ping.to }?.displayName ?: "Your family member"
+                    _events.tryEmit(AppEvent.PingAnswered(name, response))
+                    runCatching { cloud.deletePing(ping.id) }
+                }
+                response == null && now - ping.createdAt > PING_TTL_MS -> runCatching { cloud.deletePing(ping.id) }
+            }
+        }
+    }
+
+    // ---- Medical ID, reminders and other preferences ----
+
+    suspend fun setMedical(info: MedicalInfo) {
+        settings.setMedical(info)
+        publish(MyStateUpdate(medical = info))
+    }
+
+    suspend fun setShareTrail(enabled: Boolean) {
+        settings.setShareTrail(enabled)
+        publish(MyStateUpdate(trail = if (enabled) settings.current().trail else emptyList()))
+    }
+
+    suspend fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType) =
+        settings.addReminder(label, hour, minute, type)
+
+    suspend fun removeReminder(id: String) = settings.removeReminder(id)
+    suspend fun setReminderEnabled(id: String, enabled: Boolean) = settings.setReminderEnabled(id, enabled)
+    suspend fun setSeniorMode(enabled: Boolean) = settings.setSeniorMode(enabled)
+    suspend fun setBatterySaver(enabled: Boolean) = settings.setBatterySaver(enabled)
+    suspend fun setOfflineAlertHours(hours: Int) = settings.setOfflineAlertHours(hours)
+
     // ---- Local preferences ----
 
     suspend fun addPlaceHere(name: String, radiusMeters: Int): Result<Unit> = runCatching {
@@ -250,11 +331,14 @@ class FamilyRepository(
         sosAt = sosAt,
         checkInMessage = checkInMessage,
         checkInAt = checkInAt,
+        trail = trail,
+        medical = medical,
     )
 
     private companion object {
         const val TAG = "FamilyRepository"
         const val ADDRESS_REFRESH_METERS = 75.0
         const val ADDRESS_REFRESH_MS = 30 * 60_000L
+        const val PING_TTL_MS = 24 * 60 * 60_000L
     }
 }

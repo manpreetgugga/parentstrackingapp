@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- On-time medicine reminders; the user can grant it under "Alarms & reminders". -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:name=".ParentsTrackerApp"
@@ -49,6 +51,23 @@
             android:name=".location.LocationSharingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- Notification buttons, reminder alarms and the widget's "I'm OK" button. -->
+        <receiver
+            android:name=".notify.ActionReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".widget.QuickActionsWidget"
+            android:exported="true"
+            android:label="@string/widget_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quick_actions_widget_info" />
+        </receiver>
 
         <receiver
             android:name=".location.BootReceiver"

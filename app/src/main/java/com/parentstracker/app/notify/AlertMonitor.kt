@@ -7,25 +7,47 @@ import com.parentstracker.app.data.Member
 import com.parentstracker.app.data.UserSettings
 import com.parentstracker.app.util.Geo
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 
 /**
  * Watches family members' updates and raises notifications for SOS, arriving at / leaving saved
- * places, and low battery. Runs while the app process is alive (open, or sharing in the background).
+ * places, low battery, phones that stopped updating, and "Are you OK?" pings.
+ * Runs while the app process is alive (open, or sharing in the background).
  */
 class AlertMonitor(private val context: Context, private val repository: FamilyRepository) {
 
     private val lastSosAt = mutableMapOf<String, Long>()
     private val lastPlaceId = mutableMapOf<String, String>()
     private val lowBatteryNotified = mutableSetOf<String>()
+    private val offlineNotified = mutableSetOf<String>()
+    private val notifiedPings = mutableSetOf<String>()
+
+    /** Re-checks every few minutes, because "no updates for 3 hours" happens without any new data. */
+    private val ticker = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(5 * 60_000L)
+        }
+    }
 
     fun start(scope: CoroutineScope) {
         scope.launch {
-            combine(repository.members, repository.settingsState.filterNotNull()) { members, settings ->
-                members to settings
-            }.collect { (members, settings) -> check(members, settings) }
+            combine(repository.members, repository.settingsState.filterNotNull(), ticker) { members, settings, now ->
+                Triple(members, settings, now)
+            }.collect { (members, settings, now) -> check(members, settings, now) }
+        }
+        scope.launch {
+            repository.incomingPings.collect { pings ->
+                pings.forEach { ping ->
+                    if (notifiedPings.add(ping.id) && System.currentTimeMillis() - ping.createdAt < PING_FRESH_MS) {
+                        Notifications.ping(context, ping.id, ping.fromName)
+                    }
+                }
+            }
         }
         scope.launch {
             repository.events.collect { event ->
@@ -36,13 +58,18 @@ class AlertMonitor(private val context: Context, private val repository: FamilyR
                         "${event.name} accepted your invite",
                         "You're now connected on Parents Tracker.",
                     )
+                    is AppEvent.PingAnswered -> Notifications.alert(
+                        context,
+                        ("answer" + event.name).hashCode(),
+                        "${event.name}: ${event.response.message}",
+                        "Reply to your “Are you OK?”",
+                    )
                 }
             }
         }
     }
 
-    private fun check(members: List<Member>, settings: UserSettings) {
-        val now = System.currentTimeMillis()
+    private fun check(members: List<Member>, settings: UserSettings, now: Long) {
         for (member in members) {
             if (member.isDemo) continue
             val name = member.displayName
@@ -84,6 +111,20 @@ class AlertMonitor(private val context: Context, private val repository: FamilyR
                     lowBatteryNotified.remove(member.uid)
                 }
             }
+
+            val silentFor = now - location.timeMillis
+            if (settings.offlineAlertHours > 0 && member.sharing && silentFor > settings.offlineAlertHours * HOUR_MS) {
+                if (offlineNotified.add(member.uid)) {
+                    Notifications.alert(
+                        context,
+                        ("offline" + member.uid).hashCode(),
+                        "No updates from $name for ${silentFor / HOUR_MS} h",
+                        "Their phone may be switched off, out of battery or without internet. Last seen ${location.address ?: "on the map"}.",
+                    )
+                }
+            } else if (silentFor <= settings.offlineAlertHours * HOUR_MS) {
+                offlineNotified.remove(member.uid)
+            }
         }
     }
 
@@ -92,5 +133,7 @@ class AlertMonitor(private val context: Context, private val repository: FamilyR
         const val HYSTERESIS_M = 50.0
         const val LOW_BATTERY = 15
         const val SOS_FRESH_MS = 60 * 60_000L
+        const val PING_FRESH_MS = 60 * 60_000L
+        const val HOUR_MS = 60 * 60_000L
     }
 }

@@ -23,6 +23,8 @@ data class RemoteMember(
     val sosAt: Long,
     val checkInMessage: String?,
     val checkInAt: Long,
+    val trail: List<TrailPoint> = emptyList(),
+    val medical: MedicalInfo? = null,
 )
 
 /** This user's own cloud document: mainly who is allowed to see them. */
@@ -37,6 +39,8 @@ data class MyStateUpdate(
     val sosAt: Long? = null,
     val checkInMessage: String? = null,
     val checkInAt: Long? = null,
+    val trail: List<TrailPoint>? = null,
+    val medical: MedicalInfo? = null,
 )
 
 /**
@@ -56,6 +60,10 @@ interface CloudBackend {
     /** Invites this user created. */
     val myInvites: Flow<List<Invite>>
 
+    /** "Are you OK?" pings sent to this user, and the ones this user sent. */
+    val incomingPings: Flow<List<Ping>>
+    val outgoingPings: Flow<List<Ping>>
+
     suspend fun connect()
     suspend fun publishState(update: MyStateUpdate)
     suspend fun createInvite(fromName: String, inviteeName: String, relation: String, phone: String?, direction: ShareDirection): Invite
@@ -66,6 +74,9 @@ interface CloudBackend {
     suspend fun addViewer(uid: String, name: String)
     suspend fun removeViewer(uid: String)
     suspend fun stopViewing(ownerUid: String)
+    suspend fun sendPing(to: String, fromName: String)
+    suspend fun answerPing(id: String, response: PingResponse)
+    suspend fun deletePing(id: String)
 }
 
 class CloudNotConfiguredException : IllegalStateException(
@@ -79,6 +90,8 @@ class LocalOnlyBackend : CloudBackend {
     override val members: Flow<List<RemoteMember>> = flowOf(emptyList())
     override val myProfile: Flow<MyCloudProfile?> = flowOf(MyCloudProfile())
     override val myInvites: Flow<List<Invite>> = flowOf(emptyList())
+    override val incomingPings: Flow<List<Ping>> = flowOf(emptyList())
+    override val outgoingPings: Flow<List<Ping>> = flowOf(emptyList())
 
     override suspend fun connect() = Unit
     override suspend fun publishState(update: MyStateUpdate) = Unit
@@ -97,4 +110,7 @@ class LocalOnlyBackend : CloudBackend {
     override suspend fun addViewer(uid: String, name: String) = throw CloudNotConfiguredException()
     override suspend fun removeViewer(uid: String) = throw CloudNotConfiguredException()
     override suspend fun stopViewing(ownerUid: String) = throw CloudNotConfiguredException()
+    override suspend fun sendPing(to: String, fromName: String) = throw CloudNotConfiguredException()
+    override suspend fun answerPing(id: String, response: PingResponse) = throw CloudNotConfiguredException()
+    override suspend fun deletePing(id: String) = Unit
 }

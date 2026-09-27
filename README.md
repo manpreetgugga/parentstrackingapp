@@ -31,14 +31,30 @@ Built with Kotlin and Jetpack Compose (Material 3).
 - **Demo family**: preview the full dashboard before connecting real phones.
 - Prominent location-use disclosure during onboarding (required by Google Play), plus light and dark themes.
 
+**Safety features added in v1.1:**
+
+| # | Feature | What it does |
+| --- | --- | --- |
+| 1 | **"Are you OK?" ping** | Tap *Are you OK?* on a family card. Their phone shows a notification with **I'm OK 👍** / **Please call me** buttons. The answer comes back as a notification and a check-in. |
+| 2 | **Medical ID** | Blood group, conditions, allergies, medicines, doctor. Shared with family (with a one-tap *Call doctor*) and added to your SOS text. |
+| 3 | **Medicine and check-in reminders** | Daily reminders. Tapping **Taken** or **I'm OK** on the notification tells the family ("Took BP tablet 💊"). |
+| 4 | **Today's trail** | Where someone has been in the last 24 hours as a timeline of stops ("Temple · 10:05 – 11:40 · 1 h 35 min"), drawn as a line on the live map, with *Replay route in Google Maps*. The person being tracked can turn it off. |
+| 5 | **Activity status** | "Walking", or "Driving · 41 km/h", from GPS speed, shown on cards. |
+| 6 | **No-update alert** | A notification when someone's phone hasn't updated for 2, 3 or 6 hours (switched off, no battery or no internet). |
+| 7 | **Smart battery saver** | Below 20% battery, updates slow to every 15 minutes, and one last location is sent at 10%. |
+| 8 | **Nearby help** | One tap to find the nearest hospital, police station or pharmacy near you, or near a family member who sent an SOS. |
+| 9 | **Senior mode** | Large text across the app for parents' phones. |
+| 10 | **Home-screen widget** | **I'm OK** (checks in instantly) and **SOS** (opens the SOS confirmation) without opening the app. |
+
 ## What works right now vs. what needs keys
 
 | Works with no setup | Needs your keys |
 | --- | --- |
 | Your own location, address, battery, sharing links | **Live map tab** → Google Maps API key |
-| Saved places, SOS (SMS + call), check-ins | **Connecting family phones** (invites, live family locations, alerts) → Firebase `google-services.json` |
-| Demo family on the dashboard and map list | |
-| "Open in Google Maps" / directions (no key needed) | |
+| Saved places, SOS (SMS + call), check-ins | **Connecting family phones** (invites, live family locations, alerts, pings, trails, Medical ID) → Firebase `google-services.json` |
+| Medicine and check-in reminders, senior mode, battery saver, widget | |
+| Nearby help, "Open in Google Maps", directions and route replay (no key needed) | |
+| Demo family (with trails and a Medical ID) on the dashboard and map list | |
 
 The app detects both automatically at build time; you don't need to change any code.
 
@@ -100,9 +116,12 @@ app/src/main/java/com/parentstracker/app/
 │                CloudBackend + FirebaseBackend / LocalOnlyBackend, DemoData
 ├── location/    LocationTracker (fused location, geocoder, battery),
 │                LocationSharingService (foreground service), BootReceiver
-├── notify/      Notifications (channels, sharing notification), AlertMonitor (SOS/arrival/battery)
+├── notify/      Notifications, AlertMonitor (SOS/arrival/battery/no-update/pings),
+│                ActionReceiver (notification + widget buttons), ReminderScheduler
+├── widget/      QuickActionsWidget (home-screen "I'm OK" / SOS)
 ├── ui/          MainActivity, Root (navigation), AppViewModel, screens/, components/, theme/
-└── util/        Geo, InviteCodes, Intents (dial/SMS/maps/share), Perms
+└── util/        Geo, InviteCodes, Intents (dial/SMS/maps/share/nearby), Perms,
+                 Trail, MotionDetector, ReminderTimes, BatterySaver
 firestore.rules  Firestore security rules
 ```
 

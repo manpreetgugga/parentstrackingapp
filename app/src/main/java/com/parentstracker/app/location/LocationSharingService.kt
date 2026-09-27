@@ -1,9 +1,12 @@
 package com.parentstracker.app.location
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Looper
 import android.util.Log
@@ -20,7 +23,10 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.parentstracker.app.appContainer
 import com.parentstracker.app.notify.Notifications
+import com.parentstracker.app.util.BatterySaver
 import com.parentstracker.app.util.Perms
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -38,6 +44,21 @@ class LocationSharingService : LifecycleService() {
     private val container by lazy { appContainer }
     private lateinit var fused: FusedLocationProviderClient
     private var observing = false
+    private var criticalSent = false
+    private val battery = MutableStateFlow(LocationTracker.Battery(null, false))
+
+    /** Battery level changes arrive here; they drive the battery saver and the "last location" send. */
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            battery.value = LocationTracker.Battery(
+                level = if (level >= 0 && scale > 0) level * 100 / scale else null,
+                charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL,
+            )
+        }
+    }
 
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -96,11 +117,31 @@ class LocationSharingService : LifecycleService() {
             }
             repository.shouldShare.collect { if (it == false) stopSelf() }
         }
+        ContextCompat.registerReceiver(
+            this,
+            batteryReceiver,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         lifecycleScope.launch {
-            repository.settingsState.filterNotNull()
-                .map { it.updateIntervalMinutes }
+            combine(repository.settingsState.filterNotNull(), battery) { settings, b ->
+                BatterySaver.effectiveInterval(settings.updateIntervalMinutes, b.level, b.charging, settings.batterySaver)
+            }
                 .distinctUntilChanged()
                 .collect { requestUpdates(it) }
+        }
+        // Send one last fresh location when the battery is about to run out.
+        lifecycleScope.launch {
+            battery.collect { b ->
+                if (BatterySaver.isCritical(b.level, b.charging)) {
+                    if (!criticalSent) {
+                        criticalSent = true
+                        repository.refreshMyLocation(forcePublish = true)
+                    }
+                } else if (b.charging || (b.level ?: 100) > BatterySaver.CRITICAL_PERCENT + 5) {
+                    criticalSent = false
+                }
+            }
         }
         lifecycleScope.launch {
             repository.viewers
@@ -142,6 +183,7 @@ class LocationSharingService : LifecycleService() {
 
     override fun onDestroy() {
         fused.removeLocationUpdates(callback)
+        if (observing) runCatching { unregisterReceiver(batteryReceiver) }
         super.onDestroy()
     }
 

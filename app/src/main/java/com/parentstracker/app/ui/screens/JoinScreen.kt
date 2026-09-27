@@ -288,9 +288,10 @@ private fun ConsentContent(
             "What $from will see",
             listOf(
                 "Your live location and street address",
-                "Your phone's battery level",
+                "Where you've been today (last 24 hours; you can turn this off)",
+                "Your phone's battery level and whether you're walking or driving",
                 "When your location was last updated",
-                "SOS alerts and check-ins you send",
+                "SOS alerts, check-ins, and your Medical ID if you add one",
             ),
         )
     }
@@ -308,6 +309,7 @@ private fun ConsentContent(
             if (theySeeYou) {
                 add("A banner in this app and a notification on your phone always show while your location is shared")
                 add("Pause or stop sharing anytime from the banner, the notification or the People tab")
+                add("$from can ask “Are you OK?”; you answer with one tap")
             }
             if (youSeeThem) add("You can stop seeing $from anytime")
             add("Nothing is shared unless you tap Allow")

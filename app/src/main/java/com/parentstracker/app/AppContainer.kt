@@ -10,11 +10,16 @@ import com.parentstracker.app.data.SettingsStore
 import com.parentstracker.app.location.LocationSharingService
 import com.parentstracker.app.location.LocationTracker
 import com.parentstracker.app.notify.AlertMonitor
+import com.parentstracker.app.notify.ReminderScheduler
+import com.parentstracker.app.widget.QuickActionsWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** Hand-rolled dependency container, created once in [ParentsTrackerApp]. */
@@ -24,6 +29,7 @@ class AppContainer(private val context: Context) {
     val tracker = LocationTracker(context)
     val cloud: CloudBackend = createCloudBackend(context)
     val repository = FamilyRepository(appScope, settings, cloud, tracker)
+    val reminderScheduler = ReminderScheduler(context)
     private val alertMonitor = AlertMonitor(context, repository)
     private val inForeground = MutableStateFlow(false)
 
@@ -36,11 +42,29 @@ class AppContainer(private val context: Context) {
             combine(repository.shouldShare, inForeground) { should, foreground -> should == true && foreground }
                 .collect { if (it) LocationSharingService.start(context) }
         }
+        // Keep reminder alarms in step with the saved reminders (also re-arms them after a reboot).
+        appScope.launch {
+            var previousIds = emptySet<String>()
+            repository.settingsState.filterNotNull().map { it.reminders }.distinctUntilChanged().collect { reminders ->
+                reminderScheduler.sync(reminders, previousIds)
+                previousIds = reminders.map { it.id }.toSet()
+            }
+        }
+        // Show the latest check-in on the home-screen widget.
+        appScope.launch {
+            repository.settingsState.filterNotNull().map { it.checkInAt }.distinctUntilChanged().collect {
+                QuickActionsWidget.refreshAll(context)
+            }
+        }
     }
 
     fun onForegroundChanged(foreground: Boolean) {
         inForeground.value = foreground
-        if (foreground) appScope.launch { repository.connect() }
+        if (foreground) {
+            appScope.launch { repository.connect() }
+            // Re-arm reminders in case "Alarms & reminders" was just allowed or revoked.
+            appScope.launch { reminderScheduler.sync(settings.current().reminders, emptySet()) }
+        }
     }
 
     /** Call after permissions change: starts sharing if it was waiting on a permission. */

@@ -53,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -66,13 +67,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.parentstracker.app.data.CHECK_IN_MESSAGES
 import com.parentstracker.app.data.LocationSnapshot
+import com.parentstracker.app.data.Member
+import com.parentstracker.app.data.PingResponse
 import com.parentstracker.app.data.SavedPlace
 import com.parentstracker.app.data.UserSettings
 import com.parentstracker.app.ui.AppViewModel
 import com.parentstracker.app.ui.components.Banner
 import com.parentstracker.app.ui.components.BannerButton
 import com.parentstracker.app.ui.components.BatteryIndicator
+import com.parentstracker.app.ui.components.IncomingPingBanner
 import com.parentstracker.app.ui.components.InfoRow
+import com.parentstracker.app.ui.components.MedicalInfoDialog
+import com.parentstracker.app.ui.components.NearbyHelpRow
+import com.parentstracker.app.ui.components.TrailSheet
 import com.parentstracker.app.ui.components.MemberCard
 import com.parentstracker.app.ui.components.OnSos
 import com.parentstracker.app.ui.components.SectionHeader
@@ -98,10 +105,23 @@ fun DashboardScreen(
     val members by vm.members.collectAsStateWithLifecycle()
     val viewers by vm.viewers.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
+    val incomingPings by vm.incomingPings.collectAsStateWithLifecycle()
+    val outgoingPings by vm.outgoingPings.collectAsStateWithLifecycle()
+    val sosRequested by vm.sosRequested.collectAsStateWithLifecycle()
     val perms = rememberPermissionSnapshot()
     val context = LocalContext.current
     val now = rememberNow()
     var showSosDialog by rememberSaveable { mutableStateOf(false) }
+    var trailFor by remember { mutableStateOf<Member?>(null) }
+    var medicalFor by remember { mutableStateOf<Member?>(null) }
+
+    // The home-screen widget's SOS button lands here: confirm before sending.
+    LaunchedEffect(sosRequested) {
+        if (sosRequested) {
+            showSosDialog = true
+            vm.consumeSosRequest()
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         vm.onPermissionsChanged()
     }
@@ -164,6 +184,10 @@ fun DashboardScreen(
                         onCall = member.phone?.let { phone -> { Intents.dial(context, phone) } },
                         onDirections = location?.let { l -> { Intents.directions(context, l.lat, l.lng) } },
                         onShowOnMap = if (location != null) { { onOpenMap(member.uid) } } else null,
+                        waitingPingAt = outgoingPings.firstOrNull { it.to == member.uid }?.createdAt,
+                        onPing = { vm.sendPing(member) },
+                        onTrail = { trailFor = member },
+                        onMedical = { medicalFor = member },
                     )
                 }
             }
@@ -179,8 +203,19 @@ fun DashboardScreen(
                     contentColor = OnSos,
                 ) {
                     member.phone?.let { phone -> BannerButton("Call") { Intents.dial(context, phone) } }
-                    member.location?.let { l -> BannerButton("Directions") { Intents.directions(context, l.lat, l.lng) } }
+                    member.location?.let { l ->
+                        BannerButton("Hospitals") { Intents.searchNearby(context, "hospital", l.lat, l.lng) }
+                        BannerButton("Directions") { Intents.directions(context, l.lat, l.lng) }
+                    }
                 }
+            }
+            items(incomingPings, key = { "ping-" + it.id }) { ping ->
+                IncomingPingBanner(
+                    ping = ping,
+                    now = now,
+                    onOk = { vm.answerPing(ping, PingResponse.OK) },
+                    onCallMe = { vm.answerPing(ping, PingResponse.CALL_ME) },
+                )
             }
             if (s.sosActive) {
                 item(key = "my-sos") {
@@ -286,6 +321,11 @@ fun DashboardScreen(
         }
     }
 
+    trailFor?.let { member -> TrailSheet(member, s.places, now, onDismiss = { trailFor = null }) }
+    medicalFor?.let { member ->
+        member.medical?.let { info -> MedicalInfoDialog(member.displayName, info, onDismiss = { medicalFor = null }) }
+    }
+
     if (showSosDialog) {
         SosDialog(
             settings = s,
@@ -308,6 +348,7 @@ private fun sosMessage(s: UserSettings): String = buildString {
         l.address?.let { append(": $it") }
         append("\n${Geo.mapsLink(l.lat, l.lng)}")
     }
+    if (!s.medical.isEmpty) append("\nMedical ID: ${s.medical.summary()}")
     append("\n(sent from Parents Tracker)")
 }
 
@@ -433,6 +474,7 @@ private fun SafetyCard(
                     Text("Add emergency SMS contacts")
                 }
             }
+            NearbyHelpRow(settings.lastLocation?.lat, settings.lastLocation?.lng, Modifier.padding(top = 8.dp))
         }
     }
 }

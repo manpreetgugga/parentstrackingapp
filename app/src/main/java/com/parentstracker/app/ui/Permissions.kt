@@ -18,6 +18,7 @@ data class PermissionSnapshot(
     val precise: Boolean,
     val background: Boolean,
     val notifications: Boolean,
+    val exactAlarms: Boolean = true,
 ) {
     companion object {
         fun read(context: Context) = PermissionSnapshot(
@@ -25,6 +26,7 @@ data class PermissionSnapshot(
             precise = Perms.hasPreciseLocation(context),
             background = Perms.hasBackgroundLocation(context),
             notifications = Perms.hasNotifications(context),
+            exactAlarms = Perms.hasExactAlarms(context),
         )
     }
 }

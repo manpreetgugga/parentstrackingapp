@@ -38,10 +38,18 @@ data class UserSettings(
     val checkInMessage: String? = null,
     val checkInAt: Long = 0,
     val lastViewerCount: Int = 0,
+    val trail: List<TrailPoint> = emptyList(),
+    val shareTrail: Boolean = true,
+    val medical: MedicalInfo = MedicalInfo(),
+    val reminders: List<Reminder> = emptyList(),
+    val seniorMode: Boolean = false,
+    val batterySaver: Boolean = true,
+    val offlineAlertHours: Int = 3,
 ) {
     companion object {
         const val DEFAULT_EMERGENCY_NUMBER = "112"
         val INTERVAL_CHOICES = listOf(1, 5, 15)
+        val OFFLINE_ALERT_CHOICES = listOf(0, 2, 3, 6)
     }
 }
 
@@ -66,6 +74,13 @@ class SettingsStore(private val context: Context) {
         val CHECK_IN_MSG = stringPreferencesKey("check_in_msg")
         val CHECK_IN_AT = longPreferencesKey("check_in_at")
         val VIEWER_COUNT = intPreferencesKey("viewer_count")
+        val TRAIL = stringPreferencesKey("trail")
+        val SHARE_TRAIL = booleanPreferencesKey("share_trail")
+        val MEDICAL = stringPreferencesKey("medical")
+        val REMINDERS = stringPreferencesKey("reminders")
+        val SENIOR_MODE = booleanPreferencesKey("senior_mode")
+        val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
+        val OFFLINE_ALERT_HOURS = intPreferencesKey("offline_alert_hours")
     }
 
     val flow: Flow<UserSettings> = context.dataStore.data
@@ -93,6 +108,13 @@ class SettingsStore(private val context: Context) {
         checkInMessage = this[Keys.CHECK_IN_MSG],
         checkInAt = this[Keys.CHECK_IN_AT] ?: 0,
         lastViewerCount = this[Keys.VIEWER_COUNT] ?: 0,
+        trail = JsonCodec.decodeTrail(this[Keys.TRAIL]),
+        shareTrail = this[Keys.SHARE_TRAIL] ?: true,
+        medical = JsonCodec.decodeMedical(this[Keys.MEDICAL]),
+        reminders = JsonCodec.decodeReminders(this[Keys.REMINDERS]),
+        seniorMode = this[Keys.SENIOR_MODE] ?: false,
+        batterySaver = this[Keys.BATTERY_SAVER] ?: true,
+        offlineAlertHours = this[Keys.OFFLINE_ALERT_HOURS] ?: 3,
     )
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {
@@ -172,4 +194,32 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setViewerCount(count: Int) = edit { it[Keys.VIEWER_COUNT] = count }
+
+    suspend fun setTrail(trail: List<TrailPoint>) = edit { it[Keys.TRAIL] = JsonCodec.encodeTrail(trail) }
+
+    suspend fun setShareTrail(enabled: Boolean) = edit { it[Keys.SHARE_TRAIL] = enabled }
+
+    suspend fun setMedical(info: MedicalInfo) = edit { it[Keys.MEDICAL] = JsonCodec.encodeMedical(info) }
+
+    suspend fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType) = edit {
+        val reminders = JsonCodec.decodeReminders(it[Keys.REMINDERS])
+        val reminder = Reminder(UUID.randomUUID().toString(), label, hour, minute, type)
+        it[Keys.REMINDERS] = JsonCodec.encodeReminders((reminders + reminder).sortedBy { r -> r.hour * 60 + r.minute })
+    }
+
+    suspend fun removeReminder(id: String) = edit {
+        val reminders = JsonCodec.decodeReminders(it[Keys.REMINDERS])
+        it[Keys.REMINDERS] = JsonCodec.encodeReminders(reminders.filterNot { r -> r.id == id })
+    }
+
+    suspend fun setReminderEnabled(id: String, enabled: Boolean) = edit {
+        val reminders = JsonCodec.decodeReminders(it[Keys.REMINDERS])
+        it[Keys.REMINDERS] = JsonCodec.encodeReminders(reminders.map { r -> if (r.id == id) r.copy(enabled = enabled) else r })
+    }
+
+    suspend fun setSeniorMode(enabled: Boolean) = edit { it[Keys.SENIOR_MODE] = enabled }
+
+    suspend fun setBatterySaver(enabled: Boolean) = edit { it[Keys.BATTERY_SAVER] = enabled }
+
+    suspend fun setOfflineAlertHours(hours: Int) = edit { it[Keys.OFFLINE_ALERT_HOURS] = hours }
 }

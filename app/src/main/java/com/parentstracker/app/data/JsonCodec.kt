@@ -67,6 +67,83 @@ internal object JsonCodec {
         }.getOrDefault(emptyList())
     }
 
+    fun encodeTrail(trail: List<TrailPoint>): String = JSONArray().apply {
+        trail.forEach { p ->
+            put(JSONObject().apply {
+                put("lat", p.lat)
+                put("lng", p.lng)
+                put("t", p.time)
+                p.address?.let { put("a", it) }
+            })
+        }
+    }.toString()
+
+    fun decodeTrail(json: String?): List<TrailPoint> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(json)
+            List(array.length()) { i ->
+                val o = array.getJSONObject(i)
+                TrailPoint(o.getDouble("lat"), o.getDouble("lng"), o.getLong("t"), if (o.has("a")) o.getString("a") else null)
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun encodeMedical(info: MedicalInfo): String = JSONObject().apply {
+        put("blood", info.bloodGroup)
+        put("conditions", info.conditions)
+        put("allergies", info.allergies)
+        put("medicines", info.medicines)
+        put("doctor", info.doctorName)
+        put("doctorPhone", info.doctorPhone)
+    }.toString()
+
+    fun decodeMedical(json: String?): MedicalInfo {
+        if (json.isNullOrBlank()) return MedicalInfo()
+        return runCatching {
+            val o = JSONObject(json)
+            MedicalInfo(
+                bloodGroup = o.optString("blood"),
+                conditions = o.optString("conditions"),
+                allergies = o.optString("allergies"),
+                medicines = o.optString("medicines"),
+                doctorName = o.optString("doctor"),
+                doctorPhone = o.optString("doctorPhone"),
+            )
+        }.getOrDefault(MedicalInfo())
+    }
+
+    fun encodeReminders(reminders: List<Reminder>): String = JSONArray().apply {
+        reminders.forEach { r ->
+            put(JSONObject().apply {
+                put("id", r.id)
+                put("label", r.label)
+                put("h", r.hour)
+                put("m", r.minute)
+                put("type", r.type.name)
+                put("on", r.enabled)
+            })
+        }
+    }.toString()
+
+    fun decodeReminders(json: String?): List<Reminder> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(json)
+            List(array.length()) { i ->
+                val o = array.getJSONObject(i)
+                Reminder(
+                    id = o.getString("id"),
+                    label = o.getString("label"),
+                    hour = o.getInt("h"),
+                    minute = o.getInt("m"),
+                    type = runCatching { ReminderType.valueOf(o.getString("type")) }.getOrDefault(ReminderType.MEDICINE),
+                    enabled = o.optBoolean("on", true),
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
     fun encodeLabels(labels: Map<String, MemberLabel>): String = JSONObject().apply {
         labels.forEach { (uid, label) ->
             put(uid, JSONObject().apply {

@@ -2,6 +2,8 @@ package com.parentstracker.app.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,17 +16,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +46,7 @@ import com.parentstracker.app.data.SavedPlace
 import com.parentstracker.app.data.Viewer
 import com.parentstracker.app.ui.theme.StatusColors
 import com.parentstracker.app.util.Geo
+import com.parentstracker.app.util.MotionDetector
 
 /** One-line status for a family member, e.g. "At Home · 2 min ago". */
 fun memberStatus(member: Member, places: List<SavedPlace>, now: Long): Pair<String, Boolean> {
@@ -49,13 +57,19 @@ fun memberStatus(member: Member, places: List<SavedPlace>, now: Long): Pair<Stri
         !member.sharing -> "Paused sharing · last seen $ago"
         else -> {
             val place = Geo.placeFor(location.lat, location.lng, places)
-            val base = if (place != null) "At ${place.name} · $ago" else "Updated $ago"
+            val motion = if (now - location.timeMillis < MotionDetector.FRESH_MS) MotionDetector.describe(location.speed) else null
+            val base = when {
+                place != null -> "At ${place.name} · $ago"
+                motion != null -> "$motion · $ago"
+                else -> "Updated $ago"
+            }
             if (stale) "$base · phone may be off or offline" else base
         }
     }
     return text to (stale || !member.sharing)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MemberCard(
     member: Member,
@@ -66,6 +80,10 @@ fun MemberCard(
     onDirections: (() -> Unit)?,
     onShowOnMap: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    waitingPingAt: Long? = null,
+    onPing: (() -> Unit)? = null,
+    onTrail: (() -> Unit)? = null,
+    onMedical: (() -> Unit)? = null,
 ) {
     val location = member.location
     val (status, warn) = memberStatus(member, places, now)
@@ -113,6 +131,9 @@ fun MemberCard(
                     color = StatusColors.success,
                 )
             }
+            if (waitingPingAt != null) {
+                InfoRow(Icons.Filled.Schedule, "Asked “Are you OK?” ${Geo.timeAgo(waitingPingAt, now)} · waiting for reply")
+            }
             if (onCall != null || onDirections != null || onShowOnMap != null) {
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,7 +142,25 @@ fun MemberCard(
                     onShowOnMap?.let { CardAction(Icons.Filled.Map, "Map", it, Modifier.weight(1f)) }
                 }
             }
+            val hasTrail = member.trail.size > 1
+            val hasMedical = member.medical?.isEmpty == false
+            if (onPing != null || (onTrail != null && hasTrail) || (onMedical != null && hasMedical)) {
+                FlowRow(Modifier.padding(top = 4.dp)) {
+                    onPing?.let { SecondaryAction(Icons.Filled.NotificationsActive, "Are you OK?", it) }
+                    if (hasTrail) onTrail?.let { SecondaryAction(Icons.Filled.Timeline, "Trail", it) }
+                    if (hasMedical) onMedical?.let { SecondaryAction(Icons.Filled.LocalHospital, "Medical", it) }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun SecondaryAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label, maxLines = 1)
     }
 }
 

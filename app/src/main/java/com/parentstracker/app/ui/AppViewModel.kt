@@ -8,10 +8,16 @@ import com.parentstracker.app.appContainer
 import com.parentstracker.app.data.CloudStatus
 import com.parentstracker.app.data.Invite
 import com.parentstracker.app.data.Member
+import com.parentstracker.app.data.MedicalInfo
 import com.parentstracker.app.data.MemberLabel
+import com.parentstracker.app.data.Ping
+import com.parentstracker.app.data.PingResponse
+import com.parentstracker.app.data.ReminderType
 import com.parentstracker.app.data.ShareDirection
 import com.parentstracker.app.data.UserSettings
 import com.parentstracker.app.data.Viewer
+import com.parentstracker.app.util.ReminderTimes
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -39,6 +45,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    val incomingPings: StateFlow<List<Ping>> = repository.incomingPings
+    val outgoingPings: StateFlow<List<Ping>> = repository.outgoingPings
+
+    /** Set when the widget's SOS button opens the app; the dashboard shows its SOS confirmation. */
+    private val _sosRequested = MutableStateFlow(false)
+    val sosRequested: StateFlow<Boolean> = _sosRequested.asStateFlow()
+
+    fun requestSos() {
+        _sosRequested.value = true
+    }
+
+    fun consumeSosRequest() {
+        _sosRequested.value = false
+    }
 
     private fun say(message: String) {
         _messages.tryEmit(message)
@@ -193,5 +214,65 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLowBatteryAlerts(enabled: Boolean) {
         viewModelScope.launch { repository.setLowBatteryAlerts(enabled) }
+    }
+
+    fun sendPing(member: Member) {
+        viewModelScope.launch {
+            if (member.isDemo) {
+                say("Asked ${member.displayName}: are you OK?")
+                delay(2_500)
+                say("Demo: ${member.displayName} replied “${PingResponse.OK.message}”")
+                return@launch
+            }
+            repository.sendPing(member)
+                .onSuccess { say("Asked ${member.displayName}: are you OK? You'll be notified when they reply.") }
+                .onFailure { say(it.message ?: "Couldn't send") }
+        }
+    }
+
+    fun answerPing(ping: Ping, response: PingResponse) {
+        viewModelScope.launch {
+            repository.answerPing(ping.id, response)
+                .onSuccess { say("Sent “${response.message}” to ${ping.fromName}") }
+                .onFailure { say(it.message ?: "Couldn't send your answer") }
+        }
+    }
+
+    fun setMedical(info: MedicalInfo) {
+        viewModelScope.launch {
+            repository.setMedical(info)
+            say(if (info.isEmpty) "Medical ID cleared" else "Medical ID saved")
+        }
+    }
+
+    fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType) {
+        viewModelScope.launch {
+            repository.addReminder(label.trim(), hour, minute, type)
+            say("Reminder set for ${ReminderTimes.format(hour, minute)} every day")
+        }
+    }
+
+    fun removeReminder(id: String) {
+        viewModelScope.launch { repository.removeReminder(id) }
+    }
+
+    fun setReminderEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch { repository.setReminderEnabled(id, enabled) }
+    }
+
+    fun setSeniorMode(enabled: Boolean) {
+        viewModelScope.launch { repository.setSeniorMode(enabled) }
+    }
+
+    fun setBatterySaver(enabled: Boolean) {
+        viewModelScope.launch { repository.setBatterySaver(enabled) }
+    }
+
+    fun setShareTrail(enabled: Boolean) {
+        viewModelScope.launch { repository.setShareTrail(enabled) }
+    }
+
+    fun setOfflineAlertHours(hours: Int) {
+        viewModelScope.launch { repository.setOfflineAlertHours(hours) }
     }
 }

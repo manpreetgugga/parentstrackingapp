@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
@@ -166,6 +167,7 @@ fun PeopleScreen(vm: AppViewModel, onJoin: () -> Unit, onShowOnMap: (String) -> 
                     onCall = member.phone?.let { phone -> { Intents.dial(context, phone) } },
                     onEdit = if (member.isDemo) null else { { editing = member } },
                     onRemove = { confirmStopViewing = member },
+                    onPing = { vm.sendPing(member) },
                 )
             }
 
@@ -291,6 +293,7 @@ private fun MemberRow(
     onCall: (() -> Unit)?,
     onEdit: (() -> Unit)?,
     onRemove: () -> Unit,
+    onPing: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val (status, warn) = memberStatus(member, places, now)
@@ -307,6 +310,14 @@ private fun MemberRow(
                 Box {
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More options") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Ask if they're OK") },
+                            leadingIcon = { Icon(Icons.Filled.NotificationsActive, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onPing()
+                            },
+                        )
                         onMap?.let { action ->
                             DropdownMenuItem(
                                 text = { Text("Show on map") },
