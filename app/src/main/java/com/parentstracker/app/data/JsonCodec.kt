@@ -1,0 +1,94 @@
+package com.parentstracker.app.data
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** Small JSON helpers for the structured values kept in DataStore preferences. */
+internal object JsonCodec {
+
+    fun encodeLocation(location: LocationSnapshot): String = JSONObject().apply {
+        put("lat", location.lat)
+        put("lng", location.lng)
+        put("acc", location.accuracy.toDouble())
+        put("t", location.timeMillis)
+        put("spd", location.speed.toDouble())
+        location.address?.let { put("addr", it) }
+        location.battery?.let { put("bat", it) }
+        put("chg", location.charging)
+    }.toString()
+
+    fun decodeLocation(json: String?): LocationSnapshot? {
+        if (json.isNullOrBlank()) return null
+        return runCatching {
+            val o = JSONObject(json)
+            LocationSnapshot(
+                lat = o.getDouble("lat"),
+                lng = o.getDouble("lng"),
+                accuracy = o.optDouble("acc", 0.0).toFloat(),
+                timeMillis = o.getLong("t"),
+                speed = o.optDouble("spd", 0.0).toFloat(),
+                address = if (o.has("addr")) o.getString("addr") else null,
+                battery = if (o.has("bat")) o.getInt("bat") else null,
+                charging = o.optBoolean("chg", false),
+            )
+        }.getOrNull()
+    }
+
+    fun encodePlaces(places: List<SavedPlace>): String = JSONArray().apply {
+        places.forEach { p ->
+            put(JSONObject().apply {
+                put("id", p.id)
+                put("name", p.name)
+                put("lat", p.lat)
+                put("lng", p.lng)
+                put("r", p.radiusMeters)
+            })
+        }
+    }.toString()
+
+    fun decodePlaces(json: String?): List<SavedPlace> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(json)
+            List(array.length()) { i ->
+                val o = array.getJSONObject(i)
+                SavedPlace(o.getString("id"), o.getString("name"), o.getDouble("lat"), o.getDouble("lng"), o.getInt("r"))
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun encodeStrings(values: List<String>): String = JSONArray(values).toString()
+
+    fun decodeStrings(json: String?): List<String> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(json)
+            List(array.length()) { array.getString(it) }
+        }.getOrDefault(emptyList())
+    }
+
+    fun encodeLabels(labels: Map<String, MemberLabel>): String = JSONObject().apply {
+        labels.forEach { (uid, label) ->
+            put(uid, JSONObject().apply {
+                label.nickname?.let { put("n", it) }
+                label.relation?.let { put("r", it) }
+                label.phone?.let { put("p", it) }
+            })
+        }
+    }.toString()
+
+    fun decodeLabels(json: String?): Map<String, MemberLabel> {
+        if (json.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val o = JSONObject(json)
+            o.keys().asSequence().associateWith { uid ->
+                val l = o.getJSONObject(uid)
+                MemberLabel(
+                    nickname = if (l.has("n")) l.getString("n") else null,
+                    relation = if (l.has("r")) l.getString("r") else null,
+                    phone = if (l.has("p")) l.getString("p") else null,
+                )
+            }
+        }.getOrDefault(emptyMap())
+    }
+}

@@ -1,0 +1,58 @@
+rules_version = '2';
+
+// Security rules for Parents Tracker.
+// Paste into Firebase console → Firestore Database → Rules, then Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // locations/{uid}: a person's latest location, status and the list of people allowed to see it.
+    match /locations/{uid} {
+      // Only the owner and the people they approved can read it.
+      // (Written without get() defaults so Firestore can match it to the app's "viewers array-contains me" query.)
+      allow read: if signedIn()
+        && (request.auth.uid == uid || request.auth.uid in resource.data.viewers);
+
+      // Only the owner can write it (including who is allowed to see them).
+      allow create, update, delete: if signedIn() && request.auth.uid == uid;
+
+      // A viewer may remove themselves ("Stop seeing their location") and change nothing else.
+      allow update: if signedIn()
+        && request.auth.uid != uid
+        && request.auth.uid in resource.data.get('viewers', [])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewers', 'viewerNames'])
+        && request.resource.data.get('viewers', []).toSet()
+             == resource.data.get('viewers', []).toSet().difference([request.auth.uid].toSet())
+        && request.resource.data.get('viewerNames', {}).diff(resource.data.get('viewerNames', {}))
+             .affectedKeys().hasOnly([request.auth.uid]);
+    }
+
+    // invites/{code}: a request from one person to another, answered by the invitee.
+    match /invites/{code} {
+      // Anyone signed in who knows the 6-character code can open that one invite...
+      allow get: if signedIn();
+      // ...but people can only list the invites they created.
+      allow list: if signedIn() && resource.data.fromUid == request.auth.uid;
+
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.status == 'PENDING';
+
+      // The creator can manage their own invite.
+      allow update, delete: if signedIn() && resource.data.fromUid == request.auth.uid;
+
+      // The invitee can answer a pending, unexpired invite once, as themselves.
+      allow update: if signedIn()
+        && resource.data.status == 'PENDING'
+        && request.time.toMillis() < resource.data.expiresAt
+        && resource.data.fromUid != request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'acceptedBy', 'acceptedName', 'respondedAt'])
+        && request.resource.data.acceptedBy == request.auth.uid
+        && request.resource.data.status in ['ACCEPTED', 'DECLINED'];
+    }
+  }
+}
