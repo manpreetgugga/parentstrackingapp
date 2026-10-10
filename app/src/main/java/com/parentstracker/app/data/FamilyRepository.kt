@@ -3,7 +3,9 @@ package com.parentstracker.app.data
 import android.location.Location
 import android.util.Log
 import com.parentstracker.app.location.LocationTracker
+import com.parentstracker.app.util.Days
 import com.parentstracker.app.util.Geo
+import com.parentstracker.app.util.ReminderTimes
 import com.parentstracker.app.util.Trail
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -142,6 +144,7 @@ class FamilyRepository(
             charging = battery.charging,
         )
         settings.setLastLocation(snapshot)
+        if (previous != null) onPlaceChange(s, previous, snapshot)
         val trail = Trail.append(s.trail, TrailPoint(snapshot.lat, snapshot.lng, snapshot.timeMillis, snapshot.address))
         val trailChanged = trail != s.trail
         if (trailChanged) settings.setTrail(trail)
@@ -158,6 +161,22 @@ class FamilyRepository(
         return snapshot
     }
 
+    /**
+     * Arriving at one of my saved places: check in automatically ("Reached Home 🏠"), and finish a
+     * "Going somewhere" trip whose destination is that place.
+     */
+    private suspend fun onPlaceChange(s: UserSettings, previous: LocationSnapshot, now: LocationSnapshot) {
+        val before = Geo.placeFor(previous.lat, previous.lng, s.places, extraMeters = PLACE_SLACK_METERS)
+        val after = Geo.placeFor(now.lat, now.lng, s.places) ?: return
+        if (before?.id == after.id) return
+        val journey = s.journey
+        if (journey != null && journey.destination.trim().equals(after.name.trim(), ignoreCase = true)) {
+            endJourney(arrived = true)
+        } else if (s.autoArrivalCheckIn) {
+            checkIn("Reached ${after.name} 🏠", EventKind.CHECK_IN, "Arrived at ${after.name} (automatic)")
+        }
+    }
+
     suspend fun setSharingEnabled(enabled: Boolean) {
         settings.setSharingEnabled(enabled)
         publish(MyStateUpdate(sharing = enabled))
@@ -167,22 +186,92 @@ class FamilyRepository(
 
     // ---- Safety ----
 
-    suspend fun triggerSos() {
+    suspend fun triggerSos(reason: String? = null) {
         val now = System.currentTimeMillis()
         settings.setSos(true, now)
         publish(MyStateUpdate(sos = true, sosAt = now))
+        log(EventKind.SOS, "SOS sent", reason)
         refreshMyLocation(forcePublish = true)
     }
 
     suspend fun cancelSos() {
         settings.setSos(false, 0)
         publish(MyStateUpdate(sos = false))
+        log(EventKind.SOS, "SOS turned off", "Marked safe")
     }
 
-    suspend fun checkIn(message: String) {
+    /** Shares a check-in with family and records it in the activity history (unless [logTitle] is null). */
+    suspend fun checkIn(message: String, kind: EventKind = EventKind.CHECK_IN, logTitle: String? = message) {
         val now = System.currentTimeMillis()
         settings.setCheckIn(message, now)
         publish(MyStateUpdate(checkInMessage = message, checkInAt = now))
+        if (logTitle != null) log(kind, logTitle, "Shared with family")
+    }
+
+    // ---- Activity history ----
+
+    suspend fun log(kind: EventKind, title: String, detail: String? = null) {
+        settings.appendEvent(LogEvent(System.currentTimeMillis(), kind, title, detail))
+    }
+
+    suspend fun clearHistory() = settings.clearEvents()
+
+    // ---- Medicine ----
+
+    /** "Taken" on a reminder: tells family, counts down stock. Returns tablets left when stock is tracked. */
+    suspend fun medicineTaken(reminderId: String?, label: String): Int? {
+        val left = reminderId?.let { settings.takeOne(it) }
+        checkIn("Took $label 💊", EventKind.MEDICINE_TAKEN)
+        return left
+    }
+
+    /** A reminder went unanswered: let family know so someone can call. */
+    suspend fun reminderMissed(label: String, type: ReminderType) {
+        if (type == ReminderType.MEDICINE) {
+            checkIn("Hasn't marked $label as taken yet ⏰", EventKind.MEDICINE_MISSED, "Missed $label")
+        } else {
+            checkIn("Missed the $label ⏰", EventKind.CHECK_IN, "Missed $label")
+        }
+    }
+
+    suspend fun setReminderStock(id: String, stock: Int?) = settings.setReminderStock(id, stock)
+
+    // ---- Safe journey ----
+
+    suspend fun startJourney(destination: String, minutes: Int) {
+        val now = System.currentTimeMillis()
+        val journey = Journey(destination, now, now + minutes * 60_000L)
+        settings.setJourney(journey)
+        val by = Days.minuteOfDay(journey.dueAt).let { ReminderTimes.format(it / 60, it % 60) }
+        checkIn("Going to $destination 🚶 · expect me by $by", EventKind.JOURNEY, "Started trip to $destination")
+    }
+
+    suspend fun endJourney(arrived: Boolean) {
+        val journey = settings.current().journey ?: return
+        settings.setJourney(null)
+        if (arrived) {
+            checkIn("Reached ${journey.destination} ✅", EventKind.JOURNEY, "Reached ${journey.destination}")
+        } else {
+            log(EventKind.JOURNEY, "Cancelled trip to ${journey.destination}")
+        }
+    }
+
+    /** The trip ran well past its time without "I've arrived": tell family. */
+    suspend fun journeyOverdue() {
+        val journey = settings.current().journey ?: return
+        checkIn(
+            "Hasn't confirmed reaching ${journey.destination} ⚠️",
+            EventKind.JOURNEY,
+            "Didn't confirm reaching ${journey.destination}",
+        )
+    }
+
+    // ---- Mood ----
+
+    suspend fun setMood(emoji: String) {
+        val text = MOODS.firstOrNull { it.first == emoji }?.second ?: return
+        settings.setMood(Days.epochDay(System.currentTimeMillis()), emoji)
+        checkIn("$text $emoji", EventKind.MOOD)
     }
 
     // ---- Invites & connections ----
@@ -286,8 +375,21 @@ class FamilyRepository(
         publish(MyStateUpdate(trail = if (enabled) settings.current().trail else emptyList()))
     }
 
-    suspend fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType) =
-        settings.addReminder(label, hour, minute, type)
+    suspend fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType, stock: Int? = null) =
+        settings.addReminder(label, hour, minute, type, stock)
+
+    suspend fun addCurfew(placeId: String, uid: String?, hour: Int, minute: Int) = settings.addCurfew(placeId, uid, hour, minute)
+    suspend fun removeCurfew(id: String) = settings.removeCurfew(id)
+    suspend fun setQuietHours(enabled: Boolean, start: Int, end: Int) = settings.setQuietHours(enabled, start, end)
+    suspend fun setShakeToSos(enabled: Boolean) = settings.setShakeToSos(enabled)
+    suspend fun setFallDetection(enabled: Boolean) = settings.setFallDetection(enabled)
+    suspend fun setAutoArrivalCheckIn(enabled: Boolean) = settings.setAutoArrivalCheckIn(enabled)
+    suspend fun setSpeedAlertKmh(kmh: Int) = settings.setSpeedAlertKmh(kmh)
+    suspend fun setChargeReminder(enabled: Boolean) = settings.setChargeReminder(enabled)
+    suspend fun setSimpleMode(enabled: Boolean) = settings.setSimpleMode(enabled)
+    suspend fun setSimpleLanguage(language: SimpleLanguage) = settings.setSimpleLanguage(language)
+    suspend fun setSimpleCallContact(name: String, number: String) = settings.setSimpleCallContact(name, number)
+    suspend fun setSpeakAloud(enabled: Boolean) = settings.setSpeakAloud(enabled)
 
     suspend fun removeReminder(id: String) = settings.removeReminder(id)
     suspend fun setReminderEnabled(id: String, enabled: Boolean) = settings.setReminderEnabled(id, enabled)
@@ -340,5 +442,6 @@ class FamilyRepository(
         const val ADDRESS_REFRESH_METERS = 75.0
         const val ADDRESS_REFRESH_MS = 30 * 60_000L
         const val PING_TTL_MS = 24 * 60 * 60_000L
+        const val PLACE_SLACK_METERS = 50.0
     }
 }

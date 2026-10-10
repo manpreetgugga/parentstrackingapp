@@ -21,6 +21,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.unit.sp
+import com.parentstracker.app.data.MOODS
+import com.parentstracker.app.util.Days
+import com.parentstracker.app.util.ReminderTimes
+import kotlinx.coroutines.delay
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Group
@@ -99,6 +113,7 @@ fun DashboardScreen(
     onOpenMap: (String?) -> Unit,
     onOpenPeople: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit,
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val s = settings ?: return
@@ -114,6 +129,7 @@ fun DashboardScreen(
     var showSosDialog by rememberSaveable { mutableStateOf(false) }
     var trailFor by remember { mutableStateOf<Member?>(null) }
     var medicalFor by remember { mutableStateOf<Member?>(null) }
+    var showJourneyDialog by rememberSaveable { mutableStateOf(false) }
 
     // The home-screen widget's SOS button lands here: confirm before sending.
     LaunchedEffect(sosRequested) {
@@ -142,6 +158,7 @@ fun DashboardScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenHistory) { Icon(Icons.Filled.History, "Activity history") }
                     if (refreshing) {
                         CircularProgressIndicator(Modifier.padding(12.dp).size(24.dp), strokeWidth = 2.dp)
                     } else {
@@ -236,6 +253,27 @@ fun DashboardScreen(
                 }
             }
 
+            s.journey?.let { journey ->
+                item(key = "journey") {
+                    val overdue = now > journey.dueAt
+                    val by = Days.minuteOfDay(journey.dueAt).let { ReminderTimes.format(it / 60, it % 60) }
+                    Banner(
+                        icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+                        title = if (overdue) "Did you reach ${journey.destination}?" else "On your way to ${journey.destination}",
+                        message = if (overdue) {
+                            "You expected to arrive by $by. Let your family know you're safe."
+                        } else {
+                            "Expected by $by. If you don't confirm, your family will be told."
+                        },
+                        containerColor = if (overdue) StatusColors.warningContainer else MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = if (overdue) StatusColors.onWarningContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                    ) {
+                        BannerButton("Cancel trip") { vm.endJourney(arrived = false) }
+                        BannerButton("I've arrived ✅") { vm.endJourney(arrived = true) }
+                    }
+                }
+            }
+
             // Setup problems.
             if (!perms.location) {
                 item(key = "perm") {
@@ -313,6 +351,8 @@ fun DashboardScreen(
                     settings = s,
                     now = now,
                     onCheckIn = vm::checkIn,
+                    onMood = vm::setMood,
+                    onGoingSomewhere = { showJourneyDialog = true },
                     onSos = { showSosDialog = true },
                     onOpenSettings = onOpenSettings,
                 )
@@ -324,6 +364,17 @@ fun DashboardScreen(
     trailFor?.let { member -> TrailSheet(member, s.places, now, onDismiss = { trailFor = null }) }
     medicalFor?.let { member ->
         member.medical?.let { info -> MedicalInfoDialog(member.displayName, info, onDismiss = { medicalFor = null }) }
+    }
+
+    if (showJourneyDialog) {
+        JourneyDialog(
+            places = s.places.map { it.name },
+            onDismiss = { showJourneyDialog = false },
+            onStart = { destination, minutes ->
+                showJourneyDialog = false
+                vm.startJourney(destination, minutes)
+            },
+        )
     }
 
     if (showSosDialog) {
@@ -341,7 +392,7 @@ fun DashboardScreen(
     }
 }
 
-private fun sosMessage(s: UserSettings): String = buildString {
+internal fun sosMessage(s: UserSettings): String = buildString {
     append("🚨 SOS from ${s.userName}: I need help.")
     s.lastLocation?.let { l ->
         append("\nMy last location")
@@ -433,9 +484,12 @@ private fun SafetyCard(
     settings: UserSettings,
     now: Long,
     onCheckIn: (String) -> Unit,
+    onMood: (String) -> Unit,
+    onGoingSomewhere: () -> Unit,
     onSos: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
+    val todaysMood = settings.moods.lastOrNull { it.day == Days.epochDay(now) }?.mood
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Quick check-in", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -455,6 +509,25 @@ private fun SafetyCard(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("How are you feeling today?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                MOODS.forEach { (emoji, label) ->
+                    FilterChip(
+                        selected = todaysMood == emoji,
+                        onClick = { onMood(emoji) },
+                        label = { Text(emoji, fontSize = 22.sp) },
+                        modifier = Modifier.semantics { contentDescription = label },
+                    )
+                }
+            }
+            if (settings.journey == null) {
+                OutlinedButton(onClick = onGoingSomewhere, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.DirectionsWalk, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Going somewhere? Tell family when to expect you")
+                }
             }
             Spacer(Modifier.height(12.dp))
             Button(
@@ -513,6 +586,34 @@ private fun SosDialog(
     onCall: () -> Unit,
     onSend: () -> Unit,
 ) {
+    // After "Send SOS", a short countdown gives a chance to cancel a mistaken tap.
+    var countdown by remember { mutableStateOf<Int?>(null) }
+    val send by rememberUpdatedState(onSend)
+    LaunchedEffect(countdown) {
+        val left = countdown ?: return@LaunchedEffect
+        if (left <= 0) {
+            send()
+        } else {
+            delay(1_000)
+            countdown = left - 1
+        }
+    }
+    countdown?.let { left ->
+        AlertDialog(
+            onDismissRequest = {},
+            icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = StatusColors.sos) },
+            title = { Text("Sending SOS in $left…") },
+            text = { Text("Tap Cancel if this was a mistake.", style = MaterialTheme.typography.bodyLarge) },
+            confirmButton = {
+                Button(
+                    onClick = { countdown = 0 },
+                    colors = ButtonDefaults.buttonColors(containerColor = StatusColors.sos, contentColor = OnSos),
+                ) { Text("Send now") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", fontSize = 18.sp) } },
+        )
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = StatusColors.sos) },
@@ -533,7 +634,7 @@ private fun SosDialog(
         },
         confirmButton = {
             Button(
-                onClick = onSend,
+                onClick = { countdown = SOS_COUNTDOWN_SECONDS },
                 colors = ButtonDefaults.buttonColors(containerColor = StatusColors.sos, contentColor = OnSos),
             ) { Text("Send SOS") }
         },
@@ -543,5 +644,55 @@ private fun SosDialog(
                 TextButton(onClick = onDismiss) { Text("Cancel") }
             }
         },
+    )
+}
+
+private const val SOS_COUNTDOWN_SECONDS = 5
+
+/** "Going somewhere": where to and how long it should take. Family is told if you don't confirm arriving. */
+@Composable
+private fun JourneyDialog(places: List<String>, onDismiss: () -> Unit, onStart: (String, Int) -> Unit) {
+    var destination by remember { mutableStateOf("") }
+    var minutes by remember { mutableStateOf(30) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.AutoMirrored.Filled.DirectionsWalk, contentDescription = null) },
+        title = { Text("Going somewhere?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Your family sees where you're going. If you don't tap “I've arrived” in time, they'll be told so they can call you.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = destination,
+                    onValueChange = { destination = it },
+                    label = { Text("Where to?") },
+                    placeholder = { Text("e.g. Market, Gurudwara, Doctor") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (places.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        places.forEach { name -> AssistChip(onClick = { destination = name }, label = { Text(name) }) }
+                    }
+                }
+                Text("I should be there in", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(15, 30, 60, 120).forEach { m ->
+                        FilterChip(
+                            selected = minutes == m,
+                            onClick = { minutes = m },
+                            label = { Text(if (m < 60) "$m min" else "${m / 60} h") },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onStart(destination.trim(), minutes) }, enabled = destination.isNotBlank()) { Text("Start") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

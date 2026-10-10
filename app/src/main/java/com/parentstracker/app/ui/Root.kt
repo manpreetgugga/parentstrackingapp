@@ -39,6 +39,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.parentstracker.app.ui.screens.DashboardScreen
+import com.parentstracker.app.ui.screens.HistoryScreen
+import com.parentstracker.app.ui.screens.SimpleModeScreen
 import com.parentstracker.app.ui.screens.JoinScreen
 import com.parentstracker.app.ui.screens.MapScreen
 import com.parentstracker.app.ui.screens.OnboardingScreen
@@ -77,6 +79,8 @@ fun ParentsTrackerRoot(
         when {
             current == null -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
             !current.onboardingDone -> OnboardingScreen(vm)
+            // Parents who find phones confusing get four big buttons and nothing else.
+            current.simpleMode -> SimpleModeScreen(vm)
             else -> MainScaffold(vm, pendingJoinCode, onJoinCodeHandled)
         }
     }
@@ -141,8 +145,10 @@ private fun MainScaffold(vm: AppViewModel, pendingJoinCode: StateFlow<String?>, 
                     onOpenMap = { uid -> if (uid == null) nav.switchTab(Tab.MAP.route) else nav.switchTab("map?focus=$uid", restore = false) },
                     onOpenPeople = { nav.switchTab(Tab.PEOPLE.route) },
                     onOpenSettings = { nav.switchTab(Tab.SETTINGS.route) },
+                    onOpenHistory = { nav.navigate("history") },
                 )
             }
+            composable("history") { HistoryScreen(vm = vm, onBack = { nav.popBackStack() }) }
             composable(
                 route = "map?focus={focus}",
                 arguments = listOf(navArgument("focus") { type = NavType.StringType; nullable = true; defaultValue = null }),
@@ -156,7 +162,7 @@ private fun MainScaffold(vm: AppViewModel, pendingJoinCode: StateFlow<String?>, 
                     onShowOnMap = { uid -> nav.switchTab("map?focus=$uid", restore = false) },
                 )
             }
-            composable(Tab.SETTINGS.route) { SettingsScreen(vm) }
+            composable(Tab.SETTINGS.route) { SettingsScreen(vm, onOpenHistory = { nav.navigate("history") }) }
             composable(
                 route = "join?code={code}",
                 arguments = listOf(navArgument("code") { type = NavType.StringType; nullable = true; defaultValue = null }),

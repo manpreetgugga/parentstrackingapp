@@ -128,6 +128,8 @@ data class Reminder(
     val minute: Int,
     val type: ReminderType,
     val enabled: Boolean = true,
+    /** Tablets left, when the user tracks stock; "Taken" counts it down and warns before it runs out. */
+    val stock: Int? = null,
 )
 
 enum class PingResponse(val message: String) {
@@ -156,3 +158,49 @@ val RELATIONS = listOf("Mom", "Dad", "Grandma", "Grandpa", "Son", "Daughter", "S
 val CHECK_IN_MESSAGES = listOf("I'm OK 👍", "Reached home 🏠", "On my way 🚶", "Please call me 📞")
 
 val BLOOD_GROUPS = listOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
+
+/** What kind of thing happened, for the activity history and the weekly summary. */
+enum class EventKind { SOS, CHECK_IN, MEDICINE_TAKEN, MEDICINE_MISSED, FAMILY_ALERT, JOURNEY, MOOD }
+
+/** One line of the on-phone activity history. Kept only on this phone. */
+data class LogEvent(
+    val time: Long,
+    val kind: EventKind,
+    val title: String,
+    val detail: String? = null,
+)
+
+/** "Going somewhere": where to and when the person expects to arrive. */
+data class Journey(
+    val destination: String,
+    val startedAt: Long,
+    val dueAt: Long,
+)
+
+/** How someone felt on a given day (epoch day in the phone's time zone). */
+data class MoodEntry(val day: Long, val mood: String)
+
+/** "Alert me if [uid] isn't at [placeId] by [hour]:[minute]"; uid null means everyone. */
+data class CurfewRule(
+    val id: String,
+    val placeId: String,
+    val uid: String?,
+    val hour: Int,
+    val minute: Int,
+)
+
+/** Mood choices: emoji plus the check-in text family sees. */
+val MOODS = listOf(
+    "😊" to "Feeling great",
+    "🙂" to "Feeling OK",
+    "😐" to "So-so today",
+    "😟" to "Not feeling good",
+    "🤒" to "Feeling unwell",
+)
+
+/** Simple mode's language for labels and voice. */
+enum class SimpleLanguage(val label: String, val localeTag: String) {
+    ENGLISH("English", "en-IN"),
+    HINDI("हिंदी", "hi-IN"),
+    PUNJABI("ਪੰਜਾਬੀ", "pa-IN"),
+}

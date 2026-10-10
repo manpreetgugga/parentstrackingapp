@@ -13,6 +13,13 @@
     <!-- On-time medicine reminders; the user can grant it under "Alarms & reminders". -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <!-- Simple mode reads buttons and reminders aloud with the phone's text-to-speech engine. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".ParentsTrackerApp"
         android:allowBackup="false"

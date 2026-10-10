@@ -45,11 +45,31 @@ data class UserSettings(
     val seniorMode: Boolean = false,
     val batterySaver: Boolean = true,
     val offlineAlertHours: Int = 3,
+    val events: List<LogEvent> = emptyList(),
+    val journey: Journey? = null,
+    val moods: List<MoodEntry> = emptyList(),
+    val curfews: List<CurfewRule> = emptyList(),
+    val quietHoursEnabled: Boolean = false,
+    val quietStartMinute: Int = 22 * 60,
+    val quietEndMinute: Int = 7 * 60,
+    val shakeToSos: Boolean = false,
+    val fallDetection: Boolean = false,
+    val autoArrivalCheckIn: Boolean = true,
+    val speedAlertKmh: Int = 0,
+    val chargeReminder: Boolean = true,
+    val simpleMode: Boolean = false,
+    val simpleLanguage: SimpleLanguage = SimpleLanguage.ENGLISH,
+    val simpleCallName: String = "",
+    val simpleCallNumber: String = "",
+    val speakAloud: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_EMERGENCY_NUMBER = "112"
         val INTERVAL_CHOICES = listOf(1, 5, 15)
         val OFFLINE_ALERT_CHOICES = listOf(0, 2, 3, 6)
+        val SPEED_ALERT_CHOICES = listOf(0, 80, 100, 120)
+        const val MAX_EVENTS = 300
+        const val MOOD_DAYS = 30
     }
 }
 
@@ -81,6 +101,23 @@ class SettingsStore(private val context: Context) {
         val SENIOR_MODE = booleanPreferencesKey("senior_mode")
         val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
         val OFFLINE_ALERT_HOURS = intPreferencesKey("offline_alert_hours")
+        val EVENTS = stringPreferencesKey("events")
+        val JOURNEY = stringPreferencesKey("journey")
+        val MOODS = stringPreferencesKey("moods")
+        val CURFEWS = stringPreferencesKey("curfews")
+        val QUIET_ON = booleanPreferencesKey("quiet_on")
+        val QUIET_START = intPreferencesKey("quiet_start")
+        val QUIET_END = intPreferencesKey("quiet_end")
+        val SHAKE_SOS = booleanPreferencesKey("shake_sos")
+        val FALL_DETECTION = booleanPreferencesKey("fall_detection")
+        val AUTO_ARRIVAL = booleanPreferencesKey("auto_arrival_check_in")
+        val SPEED_ALERT = intPreferencesKey("speed_alert_kmh")
+        val CHARGE_REMINDER = booleanPreferencesKey("charge_reminder")
+        val SIMPLE_MODE = booleanPreferencesKey("simple_mode")
+        val SIMPLE_LANGUAGE = stringPreferencesKey("simple_language")
+        val SIMPLE_CALL_NAME = stringPreferencesKey("simple_call_name")
+        val SIMPLE_CALL_NUMBER = stringPreferencesKey("simple_call_number")
+        val SPEAK_ALOUD = booleanPreferencesKey("speak_aloud")
     }
 
     val flow: Flow<UserSettings> = context.dataStore.data
@@ -115,6 +152,24 @@ class SettingsStore(private val context: Context) {
         seniorMode = this[Keys.SENIOR_MODE] ?: false,
         batterySaver = this[Keys.BATTERY_SAVER] ?: true,
         offlineAlertHours = this[Keys.OFFLINE_ALERT_HOURS] ?: 3,
+        events = JsonCodec.decodeEvents(this[Keys.EVENTS]),
+        journey = JsonCodec.decodeJourney(this[Keys.JOURNEY]),
+        moods = JsonCodec.decodeMoods(this[Keys.MOODS]),
+        curfews = JsonCodec.decodeCurfews(this[Keys.CURFEWS]),
+        quietHoursEnabled = this[Keys.QUIET_ON] ?: false,
+        quietStartMinute = this[Keys.QUIET_START] ?: (22 * 60),
+        quietEndMinute = this[Keys.QUIET_END] ?: (7 * 60),
+        shakeToSos = this[Keys.SHAKE_SOS] ?: false,
+        fallDetection = this[Keys.FALL_DETECTION] ?: false,
+        autoArrivalCheckIn = this[Keys.AUTO_ARRIVAL] ?: true,
+        speedAlertKmh = this[Keys.SPEED_ALERT] ?: 0,
+        chargeReminder = this[Keys.CHARGE_REMINDER] ?: true,
+        simpleMode = this[Keys.SIMPLE_MODE] ?: false,
+        simpleLanguage = this[Keys.SIMPLE_LANGUAGE]
+            ?.let { runCatching { SimpleLanguage.valueOf(it) }.getOrNull() } ?: SimpleLanguage.ENGLISH,
+        simpleCallName = this[Keys.SIMPLE_CALL_NAME].orEmpty(),
+        simpleCallNumber = this[Keys.SIMPLE_CALL_NUMBER].orEmpty(),
+        speakAloud = this[Keys.SPEAK_ALOUD] ?: true,
     )
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {
@@ -201,9 +256,9 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setMedical(info: MedicalInfo) = edit { it[Keys.MEDICAL] = JsonCodec.encodeMedical(info) }
 
-    suspend fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType) = edit {
+    suspend fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType, stock: Int? = null) = edit {
         val reminders = JsonCodec.decodeReminders(it[Keys.REMINDERS])
-        val reminder = Reminder(UUID.randomUUID().toString(), label, hour, minute, type)
+        val reminder = Reminder(UUID.randomUUID().toString(), label, hour, minute, type, stock = stock)
         it[Keys.REMINDERS] = JsonCodec.encodeReminders((reminders + reminder).sortedBy { r -> r.hour * 60 + r.minute })
     }
 
@@ -222,4 +277,71 @@ class SettingsStore(private val context: Context) {
     suspend fun setBatterySaver(enabled: Boolean) = edit { it[Keys.BATTERY_SAVER] = enabled }
 
     suspend fun setOfflineAlertHours(hours: Int) = edit { it[Keys.OFFLINE_ALERT_HOURS] = hours }
+
+    suspend fun setReminderStock(id: String, stock: Int?) = edit {
+        val reminders = JsonCodec.decodeReminders(it[Keys.REMINDERS])
+        it[Keys.REMINDERS] = JsonCodec.encodeReminders(reminders.map { r -> if (r.id == id) r.copy(stock = stock) else r })
+    }
+
+    /** Counts one tablet off a tracked medicine; returns the new stock (null when it isn't tracked). */
+    suspend fun takeOne(id: String): Int? {
+        var left: Int? = null
+        edit {
+            val reminders = JsonCodec.decodeReminders(it[Keys.REMINDERS])
+            it[Keys.REMINDERS] = JsonCodec.encodeReminders(
+                reminders.map { r ->
+                    val stock = r.stock
+                    if (r.id == id && stock != null) r.copy(stock = (stock - 1).coerceAtLeast(0)).also { u -> left = u.stock } else r
+                },
+            )
+        }
+        return left
+    }
+
+    suspend fun appendEvent(event: LogEvent) = edit {
+        val events = JsonCodec.decodeEvents(it[Keys.EVENTS])
+        it[Keys.EVENTS] = JsonCodec.encodeEvents((events + event).takeLast(UserSettings.MAX_EVENTS))
+    }
+
+    suspend fun clearEvents() = edit { it.remove(Keys.EVENTS) }
+
+    suspend fun setJourney(journey: Journey?) = edit {
+        if (journey == null) it.remove(Keys.JOURNEY) else it[Keys.JOURNEY] = JsonCodec.encodeJourney(journey)
+    }
+
+    /** One mood per day; a second pick the same day replaces the first. */
+    suspend fun setMood(day: Long, mood: String) = edit {
+        val moods = JsonCodec.decodeMoods(it[Keys.MOODS]).filterNot { m -> m.day == day || m.day < day - UserSettings.MOOD_DAYS }
+        it[Keys.MOODS] = JsonCodec.encodeMoods((moods + MoodEntry(day, mood)).sortedBy { m -> m.day })
+    }
+
+    suspend fun addCurfew(placeId: String, uid: String?, hour: Int, minute: Int) = edit {
+        val rules = JsonCodec.decodeCurfews(it[Keys.CURFEWS])
+        it[Keys.CURFEWS] = JsonCodec.encodeCurfews(rules + CurfewRule(UUID.randomUUID().toString(), placeId, uid, hour, minute))
+    }
+
+    suspend fun removeCurfew(id: String) = edit {
+        val rules = JsonCodec.decodeCurfews(it[Keys.CURFEWS])
+        it[Keys.CURFEWS] = JsonCodec.encodeCurfews(rules.filterNot { r -> r.id == id })
+    }
+
+    suspend fun setQuietHours(enabled: Boolean, startMinute: Int, endMinute: Int) = edit {
+        it[Keys.QUIET_ON] = enabled
+        it[Keys.QUIET_START] = startMinute
+        it[Keys.QUIET_END] = endMinute
+    }
+
+    suspend fun setShakeToSos(enabled: Boolean) = edit { it[Keys.SHAKE_SOS] = enabled }
+    suspend fun setFallDetection(enabled: Boolean) = edit { it[Keys.FALL_DETECTION] = enabled }
+    suspend fun setAutoArrivalCheckIn(enabled: Boolean) = edit { it[Keys.AUTO_ARRIVAL] = enabled }
+    suspend fun setSpeedAlertKmh(kmh: Int) = edit { it[Keys.SPEED_ALERT] = kmh }
+    suspend fun setChargeReminder(enabled: Boolean) = edit { it[Keys.CHARGE_REMINDER] = enabled }
+    suspend fun setSimpleMode(enabled: Boolean) = edit { it[Keys.SIMPLE_MODE] = enabled }
+    suspend fun setSimpleLanguage(language: SimpleLanguage) = edit { it[Keys.SIMPLE_LANGUAGE] = language.name }
+    suspend fun setSpeakAloud(enabled: Boolean) = edit { it[Keys.SPEAK_ALOUD] = enabled }
+
+    suspend fun setSimpleCallContact(name: String, number: String) = edit {
+        it[Keys.SIMPLE_CALL_NAME] = name
+        it[Keys.SIMPLE_CALL_NUMBER] = number
+    }
 }

@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.LocalPharmacy
 import androidx.compose.material.icons.filled.LocalPolice
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Share
+import com.parentstracker.app.ui.screens.medicalShareText
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -187,7 +189,16 @@ fun MedicalInfoDialog(name: String, info: MedicalInfo, onDismiss: () -> Unit) {
                 }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { Intents.shareText(context, medicalShareText(name, info), "Share Medical ID") }) {
+                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Share")
+                }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        },
     )
 }
 

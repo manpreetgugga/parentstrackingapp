@@ -46,6 +46,30 @@ Built with Kotlin and Jetpack Compose (Material 3).
 | 9 | **Senior mode** | Large text across the app for parents' phones. |
 | 10 | **Home-screen widget** | **I'm OK** (checks in instantly) and **SOS** (opens the SOS confirmation) without opening the app. |
 
+**Added in v1.2 (no keys or setup needed):**
+
+| # | Feature | What it does |
+| --- | --- | --- |
+| 1 | **Simple mode for parents** | For parents who find phones confusing: the whole app becomes four huge buttons (**I'm OK**, **Call [you]**, **Medicine**, **Help**). Help needs a 3-second hold so it can't be pressed by accident, and leaving simple mode needs a long press on the lock icon. Turn it on in Settings → *Simple mode for parents*. |
+| 2 | **Spoken aloud, in English, Hindi or Punjabi** | Simple mode's buttons, confirmations and medicine reminders are read out with the phone's own text-to-speech, for parents who don't read comfortably. |
+| 3 | **Fall detection** | After a hard fall the phone asks "Did you fall? Are you OK?". No answer in 60 seconds sends the SOS to family automatically. |
+| 4 | **Shake to send SOS** | Shake the phone hard three times. There are 10 seconds to tap "I'm OK" before the SOS goes out. |
+| 5 | **SOS countdown** | "Send SOS" starts a 5-second countdown with Cancel, so a mistaken tap doesn't alarm everyone. |
+| 6 | **Missed-medicine follow-up** | If a reminder isn't marked *Taken* within 45 minutes, the phone reminds again and family sees "Hasn't marked BP tablet as taken yet ⏰". Missed daily check-ins work the same way. |
+| 7 | **Medicine stock and refill alert** | Optionally enter how many tablets are left. Each *Taken* counts one off, with a warning at 5 left. |
+| 8 | **"Going somewhere?" safe trip** | Pick a place and how long it should take. Family sees "Going to Market 🚶 · expect me by 5:30 PM". If you don't tap *I've arrived*, you're asked, and 20 minutes later family is told. Reaching a saved place with that name ends the trip automatically. |
+| 9 | **Automatic arrival check-in** | Arriving at one of your saved places tells family "Reached Home 🏠" without a tap. |
+| 10 | **Daily mood** | 😊 🙂 😐 😟 🤒 on the home screen, shared as a check-in and shown as a week of moods. |
+| 11 | **Activity history and weekly summary** | Every check-in, medicine, trip, SOS and family alert on this phone, filterable and shareable, with a 7-day summary (check-ins, % of medicines taken, trips, SOS, moods). |
+| 12 | **"Expected by" alerts** | "Alert me if Mom isn't Home by 8:00 PM." Checked against live location every day. |
+| 13 | **Fast-driving alert** | Get notified when a family member goes faster than 80, 100 or 120 km/h. |
+| 14 | **Quiet hours** | Arrivals, battery and similar alerts arrive silently at night. SOS, pings and safety checks always ring. |
+| 15 | **Charge reminder** | "Please charge your phone (20%)", so family keeps getting your location. |
+| 16 | **Share Medical ID** | Send your own, or a family member's, Medical ID as text over WhatsApp or SMS. |
+| 17 | **Keep-running guide** | Brand-specific steps (Xiaomi, Oppo, Realme, Vivo, Samsung and others) to stop the phone's battery saver from closing the app. |
+
+Fall detection and shake-to-SOS listen to the motion sensor while the app is running, which includes whenever location sharing is on. An automatic SOS alerts family through the app. Text messages to emergency contacts still need someone to tap *Send*, because Android doesn't allow apps to send SMS silently without extra permissions.
+
 ## What works right now vs. what needs keys
 
 | Works with no setup | Needs your keys |

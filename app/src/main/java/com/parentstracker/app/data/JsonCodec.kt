@@ -122,6 +122,7 @@ internal object JsonCodec {
                 put("m", r.minute)
                 put("type", r.type.name)
                 put("on", r.enabled)
+                r.stock?.let { put("stock", it) }
             })
         }
     }.toString()
@@ -139,6 +140,7 @@ internal object JsonCodec {
                     minute = o.getInt("m"),
                     type = runCatching { ReminderType.valueOf(o.getString("type")) }.getOrDefault(ReminderType.MEDICINE),
                     enabled = o.optBoolean("on", true),
+                    stock = if (o.has("stock")) o.getInt("stock") else null,
                 )
             }
         }.getOrDefault(emptyList())
@@ -167,5 +169,85 @@ internal object JsonCodec {
                 )
             }
         }.getOrDefault(emptyMap())
+    }
+
+    fun encodeEvents(events: List<LogEvent>): String = JSONArray().apply {
+        events.forEach { e ->
+            put(JSONObject().apply {
+                put("t", e.time)
+                put("k", e.kind.name)
+                put("title", e.title)
+                e.detail?.let { put("d", it) }
+            })
+        }
+    }.toString()
+
+    fun decodeEvents(json: String?): List<LogEvent> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(json)
+            (0 until array.length()).mapNotNull { i ->
+                val o = array.getJSONObject(i)
+                val kind = runCatching { EventKind.valueOf(o.getString("k")) }.getOrNull() ?: return@mapNotNull null
+                LogEvent(o.getLong("t"), kind, o.getString("title"), if (o.has("d")) o.getString("d") else null)
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun encodeJourney(journey: Journey): String = JSONObject().apply {
+        put("dest", journey.destination)
+        put("start", journey.startedAt)
+        put("due", journey.dueAt)
+    }.toString()
+
+    fun decodeJourney(json: String?): Journey? {
+        if (json.isNullOrBlank()) return null
+        return runCatching {
+            val o = JSONObject(json)
+            Journey(o.getString("dest"), o.getLong("start"), o.getLong("due"))
+        }.getOrNull()
+    }
+
+    fun encodeMoods(moods: List<MoodEntry>): String = JSONArray().apply {
+        moods.forEach { m ->
+            put(JSONObject().apply {
+                put("day", m.day)
+                put("mood", m.mood)
+            })
+        }
+    }.toString()
+
+    fun decodeMoods(json: String?): List<MoodEntry> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(json)
+            List(array.length()) { i ->
+                val o = array.getJSONObject(i)
+                MoodEntry(o.getLong("day"), o.getString("mood"))
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun encodeCurfews(rules: List<CurfewRule>): String = JSONArray().apply {
+        rules.forEach { r ->
+            put(JSONObject().apply {
+                put("id", r.id)
+                put("place", r.placeId)
+                r.uid?.let { put("uid", it) }
+                put("h", r.hour)
+                put("m", r.minute)
+            })
+        }
+    }.toString()
+
+    fun decodeCurfews(json: String?): List<CurfewRule> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(json)
+            List(array.length()) { i ->
+                val o = array.getJSONObject(i)
+                CurfewRule(o.getString("id"), o.getString("place"), if (o.has("uid")) o.getString("uid") else null, o.getInt("h"), o.getInt("m"))
+            }
+        }.getOrDefault(emptyList())
     }
 }

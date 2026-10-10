@@ -12,8 +12,12 @@ import com.parentstracker.app.data.MedicalInfo
 import com.parentstracker.app.data.MemberLabel
 import com.parentstracker.app.data.Ping
 import com.parentstracker.app.data.PingResponse
+import com.parentstracker.app.data.Reminder
 import com.parentstracker.app.data.ReminderType
 import com.parentstracker.app.data.ShareDirection
+import com.parentstracker.app.data.SimpleLanguage
+import com.parentstracker.app.notify.ActionReceiver
+import com.parentstracker.app.notify.Notifications
 import com.parentstracker.app.data.UserSettings
 import com.parentstracker.app.data.Viewer
 import com.parentstracker.app.util.ReminderTimes
@@ -245,13 +249,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType) {
-        viewModelScope.launch {
-            repository.addReminder(label.trim(), hour, minute, type)
-            say("Reminder set for ${ReminderTimes.format(hour, minute)} every day")
-        }
-    }
-
     fun removeReminder(id: String) {
         viewModelScope.launch { repository.removeReminder(id) }
     }
@@ -275,4 +272,114 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun setOfflineAlertHours(hours: Int) {
         viewModelScope.launch { repository.setOfflineAlertHours(hours) }
     }
+
+    // ---- v1.2 ----
+
+    fun startJourney(destination: String, minutes: Int) {
+        viewModelScope.launch {
+            repository.startJourney(destination.trim(), minutes)
+            say("Have a safe trip! We'll check on you in ${formatMinutes(minutes)}.")
+        }
+    }
+
+    fun endJourney(arrived: Boolean) {
+        viewModelScope.launch {
+            repository.endJourney(arrived)
+            say(if (arrived) "Told your family you arrived ✅" else "Trip cancelled")
+        }
+    }
+
+    fun setMood(emoji: String) {
+        viewModelScope.launch {
+            repository.setMood(emoji)
+            say("Shared how you feel with your family")
+        }
+    }
+
+    /** Simple mode's "I took it": same as tapping "Taken" on the reminder notification. */
+    fun medicineTaken(reminder: Reminder) {
+        viewModelScope.launch {
+            container.reminderScheduler.cancelFollowUp(reminder.id)
+            Notifications.cancel(getApplication(), Notifications.reminderNotificationId(reminder.id))
+            val left = repository.medicineTaken(reminder.id, reminder.label)
+            if (left != null && left <= ActionReceiver.REFILL_AT) Notifications.refill(getApplication(), reminder.label, left)
+        }
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch {
+            repository.clearHistory()
+            say("History cleared")
+        }
+    }
+
+    fun addReminder(label: String, hour: Int, minute: Int, type: ReminderType, stock: Int?) {
+        viewModelScope.launch {
+            repository.addReminder(label.trim(), hour, minute, type, stock)
+            say("Reminder set for ${ReminderTimes.format(hour, minute)} every day")
+        }
+    }
+
+    fun setReminderStock(id: String, stock: Int?) {
+        viewModelScope.launch { repository.setReminderStock(id, stock) }
+    }
+
+    fun addCurfew(placeId: String, uid: String?, hour: Int, minute: Int) {
+        viewModelScope.launch {
+            repository.addCurfew(placeId, uid, hour, minute)
+            say("You'll be alerted if they aren't there by ${ReminderTimes.format(hour, minute)}")
+        }
+    }
+
+    fun removeCurfew(id: String) {
+        viewModelScope.launch { repository.removeCurfew(id) }
+    }
+
+    fun setQuietHours(enabled: Boolean, start: Int, end: Int) {
+        viewModelScope.launch { repository.setQuietHours(enabled, start, end) }
+    }
+
+    fun setShakeToSos(enabled: Boolean) {
+        viewModelScope.launch { repository.setShakeToSos(enabled) }
+    }
+
+    fun setFallDetection(enabled: Boolean) {
+        viewModelScope.launch { repository.setFallDetection(enabled) }
+    }
+
+    fun setAutoArrivalCheckIn(enabled: Boolean) {
+        viewModelScope.launch { repository.setAutoArrivalCheckIn(enabled) }
+    }
+
+    fun setSpeedAlertKmh(kmh: Int) {
+        viewModelScope.launch { repository.setSpeedAlertKmh(kmh) }
+    }
+
+    fun setChargeReminder(enabled: Boolean) {
+        viewModelScope.launch { repository.setChargeReminder(enabled) }
+    }
+
+    fun setSimpleMode(enabled: Boolean) {
+        viewModelScope.launch { repository.setSimpleMode(enabled) }
+    }
+
+    fun setSimpleLanguage(language: SimpleLanguage) {
+        viewModelScope.launch { repository.setSimpleLanguage(language) }
+    }
+
+    fun setSimpleCallContact(name: String, number: String) {
+        viewModelScope.launch { repository.setSimpleCallContact(name.trim(), number.filter { it.isDigit() || it == '+' }) }
+    }
+
+    fun setSpeakAloud(enabled: Boolean) {
+        viewModelScope.launch { repository.setSpeakAloud(enabled) }
+    }
+
+    /** Reads a phrase aloud in simple mode's language, when "Speak aloud" is on. */
+    fun speak(text: String) {
+        val s = settings.value ?: return
+        if (s.speakAloud) container.speaker.speak(text, s.simpleLanguage.localeTag)
+    }
+
+    private fun formatMinutes(minutes: Int) = if (minutes < 60) "$minutes min" else "${minutes / 60} h" + if (minutes % 60 != 0) " ${minutes % 60} min" else ""
 }

@@ -33,8 +33,8 @@ android {
         applicationId = "com.parentstracker.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         buildConfigField("boolean", "MAPS_KEY_CONFIGURED", mapsApiKey.isNotEmpty().toString())

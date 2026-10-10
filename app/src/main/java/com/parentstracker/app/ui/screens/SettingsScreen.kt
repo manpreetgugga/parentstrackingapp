@@ -82,8 +82,30 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.filled.AccessAlarm
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PersonalInjury
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.WhereToVote
+import androidx.compose.ui.graphics.Color
 import com.parentstracker.app.BuildConfig
+import com.parentstracker.app.appContainer
 import com.parentstracker.app.data.BLOOD_GROUPS
+import com.parentstracker.app.data.Reminder
+import com.parentstracker.app.data.SimpleLanguage
+import com.parentstracker.app.notify.ActionReceiver
+import com.parentstracker.app.ui.theme.StatusColors
+import com.parentstracker.app.util.QuietHours
+import com.parentstracker.app.util.Reliability
+import com.parentstracker.app.util.SimpleText
 import com.parentstracker.app.data.CloudStatus
 import com.parentstracker.app.data.MedicalInfo
 import com.parentstracker.app.data.ReminderType
@@ -95,12 +117,14 @@ import com.parentstracker.app.util.Intents
 import com.parentstracker.app.util.ReminderTimes
 import com.parentstracker.app.util.Perms
 
-private enum class SettingsDialog { NAME, PLACE, DIAL, SMS_CONTACT, MEDICAL, REMINDER }
+private enum class SettingsDialog { NAME, PLACE, DIAL, SMS_CONTACT, MEDICAL, REMINDER, SIMPLE_CONTACT, QUIET_HOURS, CURFEW, RELIABILITY }
 
 @Composable
-fun SettingsScreen(vm: AppViewModel) {
+fun SettingsScreen(vm: AppViewModel, onOpenHistory: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val s = settings ?: return
+    val members by vm.members.collectAsStateWithLifecycle()
+    var stockFor by remember { mutableStateOf<Reminder?>(null) }
     val cloudStatus by vm.cloudStatus.collectAsStateWithLifecycle()
     val perms = rememberPermissionSnapshot()
     val context = LocalContext.current
@@ -129,6 +153,118 @@ fun SettingsScreen(vm: AppViewModel) {
                     "Bigger text and buttons, easier to read",
                     s.seniorMode,
                     vm::setSeniorMode,
+                )
+            }
+            item {
+                SettingRow(
+                    Icons.Filled.History,
+                    "Activity history",
+                    "Check-ins, medicines, trips, SOS and alerts, with a weekly summary",
+                    onClick = onOpenHistory,
+                )
+            }
+
+            item { Group("Simple mode for parents") }
+            item {
+                SwitchRow(
+                    Icons.Filled.Accessibility,
+                    "Simple mode",
+                    "Just 4 big buttons: I'm OK, Call, Medicine, Help. Spoken aloud. Hold the lock icon to leave.",
+                    s.simpleMode,
+                    vm::setSimpleMode,
+                )
+            }
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row {
+                        Icon(Icons.Filled.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(Modifier.padding(start = 16.dp)) {
+                            Text("Language for simple mode and voice", style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        SimpleLanguage.entries.forEachIndexed { index, language ->
+                            SegmentedButton(
+                                selected = s.simpleLanguage == language,
+                                onClick = {
+                                    vm.setSimpleLanguage(language)
+                                    if (s.speakAloud) context.appContainer.speaker.speak(SimpleText(language).ok, language.localeTag)
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(index, SimpleLanguage.entries.size),
+                            ) { Text(language.label) }
+                        }
+                    }
+                }
+            }
+            item {
+                SettingRow(
+                    Icons.Filled.Call,
+                    "“Call” button",
+                    if (s.simpleCallNumber.isBlank()) {
+                        "Not set: uses the first family member with a phone number"
+                    } else {
+                        "${s.simpleCallName.ifBlank { "Family" }} · ${s.simpleCallNumber}"
+                    },
+                    onClick = { dialog = SettingsDialog.SIMPLE_CONTACT },
+                )
+            }
+            item {
+                SwitchRow(
+                    Icons.Filled.RecordVoiceOver,
+                    "Speak aloud",
+                    "Read buttons and medicine reminders out loud, for parents who don't read easily",
+                    s.speakAloud,
+                    vm::setSpeakAloud,
+                )
+            }
+
+            item { Group("Safety") }
+            item {
+                SwitchRow(
+                    Icons.Filled.Vibration,
+                    "Shake to send SOS",
+                    "Shake the phone hard 3 times. You get 10 seconds to cancel before your family is alerted.",
+                    s.shakeToSos,
+                    vm::setShakeToSos,
+                )
+            }
+            item {
+                SwitchRow(
+                    Icons.Filled.PersonalInjury,
+                    "Fall detection",
+                    "After a hard fall, the phone asks “Are you OK?”. No answer in 60 seconds sends an SOS.",
+                    s.fallDetection,
+                    vm::setFallDetection,
+                )
+            }
+            item {
+                SwitchRow(
+                    Icons.Filled.WhereToVote,
+                    "Automatic arrival check-in",
+                    "Tell family “Reached Home 🏠” when you arrive at one of your saved places",
+                    s.autoArrivalCheckIn,
+                    vm::setAutoArrivalCheckIn,
+                )
+            }
+            item {
+                SwitchRow(
+                    Icons.Filled.BatteryChargingFull,
+                    "Remind me to charge",
+                    "A reminder at 20% battery, so family keeps getting your location",
+                    s.chargeReminder,
+                    vm::setChargeReminder,
+                )
+            }
+            item {
+                SettingRow(
+                    Icons.Filled.Bolt,
+                    "Keep the app running in the background",
+                    if (Reliability.isIgnoringBatteryOptimizations(context)) {
+                        "Battery optimisation is off for this app. Good."
+                    } else {
+                        "Some phones stop the app to save battery. Tap for steps for ${Reliability.brand()}."
+                    },
+                    onClick = { dialog = SettingsDialog.RELIABILITY },
                 )
             }
 
@@ -243,6 +379,15 @@ fun SettingsScreen(vm: AppViewModel) {
                         s.medical.summary()
                     },
                     onClick = { dialog = SettingsDialog.MEDICAL },
+                    trailing = if (s.medical.isEmpty) {
+                        null
+                    } else {
+                        {
+                            IconButton(onClick = { Intents.shareText(context, medicalShareText(s.userName, s.medical), "Share Medical ID") }) {
+                                Icon(Icons.Filled.Share, contentDescription = "Share Medical ID")
+                            }
+                        }
+                    },
                 )
             }
 
@@ -255,12 +400,19 @@ fun SettingsScreen(vm: AppViewModel) {
                         )
                     },
                     supportingContent = {
+                        val stock = reminder.stock
                         Text(
                             "Every day at ${ReminderTimes.format(reminder.hour, reminder.minute)}" +
-                                if (reminder.type == ReminderType.MEDICINE) " · “Taken” tells your family" else " · one-tap “I'm OK”",
+                                when {
+                                    reminder.type != ReminderType.MEDICINE -> " · one-tap “I'm OK”"
+                                    stock != null -> " · $stock left · tap to update"
+                                    else -> " · “Taken” tells your family · tap to track tablets"
+                                },
+                            color = if (stock != null && stock <= ActionReceiver.REFILL_AT) StatusColors.warning else Color.Unspecified,
                         )
                     },
                     leadingContent = { Icon(Icons.Filled.Alarm, contentDescription = null) },
+                    modifier = if (reminder.type == ReminderType.MEDICINE) Modifier.clickable { stockFor = reminder } else Modifier,
                     trailingContent = {
                         Row {
                             Switch(checked = reminder.enabled, onCheckedChange = { vm.setReminderEnabled(reminder.id, it) })
@@ -308,6 +460,28 @@ fun SettingsScreen(vm: AppViewModel) {
                         IconButton(onClick = { vm.removePlace(place.id) }) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${place.name}") }
                     },
                 )
+            }
+            items(s.curfews, key = { "curfew-" + it.id }) { rule ->
+                val place = s.places.firstOrNull { it.id == rule.placeId }
+                val who = rule.uid?.let { uid -> members.firstOrNull { it.uid == uid }?.displayName ?: "Someone" } ?: "Anyone"
+                SettingRow(
+                    icon = Icons.Filled.AccessAlarm,
+                    title = "$who at ${place?.name ?: "a removed place"} by ${ReminderTimes.format(rule.hour, rule.minute)}",
+                    subtitle = "Alert if they aren't there yet",
+                    trailing = {
+                        IconButton(onClick = { vm.removeCurfew(rule.id) }) { Icon(Icons.Filled.Delete, contentDescription = "Remove rule") }
+                    },
+                )
+            }
+            if (s.places.isNotEmpty()) {
+                item {
+                    SettingRow(
+                        icon = Icons.Filled.AccessAlarm,
+                        title = "Add an “expected by” alert",
+                        subtitle = "e.g. alert me if Mom isn't Home by 8:00 PM",
+                        onClick = { dialog = SettingsDialog.CURFEW },
+                    )
+                }
             }
             item {
                 SettingRow(
@@ -365,6 +539,43 @@ fun SettingsScreen(vm: AppViewModel) {
                             ) { Text(if (hours == 0) "Off" else "$hours h") }
                         }
                     }
+                }
+            }
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row {
+                        Icon(Icons.Filled.Speed, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(Modifier.padding(start = 16.dp)) {
+                            Text("Fast driving alert", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "When someone is moving faster than this",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        UserSettings.SPEED_ALERT_CHOICES.forEachIndexed { index, kmh ->
+                            SegmentedButton(
+                                selected = s.speedAlertKmh == kmh,
+                                onClick = { vm.setSpeedAlertKmh(kmh) },
+                                shape = SegmentedButtonDefaults.itemShape(index, UserSettings.SPEED_ALERT_CHOICES.size),
+                            ) { Text(if (kmh == 0) "Off" else "$kmh") }
+                        }
+                    }
+                }
+            }
+            item {
+                SwitchRow(
+                    Icons.Filled.Bedtime,
+                    "Quiet hours",
+                    "${QuietHours.format(s.quietStartMinute)} – ${QuietHours.format(s.quietEndMinute)}: arrivals and battery alerts arrive silently. SOS always rings.",
+                    s.quietHoursEnabled,
+                ) { vm.setQuietHours(it, s.quietStartMinute, s.quietEndMinute) }
+            }
+            if (s.quietHoursEnabled) {
+                item {
+                    SettingRow(Icons.Filled.Schedule, "Change quiet hours", null, onClick = { dialog = SettingsDialog.QUIET_HOURS })
                 }
             }
 
@@ -450,11 +661,39 @@ fun SettingsScreen(vm: AppViewModel) {
         )
         SettingsDialog.REMINDER -> AddReminderDialog(
             onDismiss = { dialog = null },
-            onSave = { label, hour, minute, type ->
-                vm.addReminder(label, hour, minute, type)
+            onSave = { label, hour, minute, type, stock ->
+                vm.addReminder(label, hour, minute, type, stock)
                 dialog = null
             },
         )
+        SettingsDialog.SIMPLE_CONTACT -> SimpleContactDialog(
+            initialName = s.simpleCallName,
+            initialNumber = s.simpleCallNumber,
+            onDismiss = { dialog = null },
+            onSave = { name, number ->
+                vm.setSimpleCallContact(name, number)
+                dialog = null
+            },
+        )
+        SettingsDialog.QUIET_HOURS -> QuietHoursDialog(
+            start = s.quietStartMinute,
+            end = s.quietEndMinute,
+            onDismiss = { dialog = null },
+            onSave = { start, end ->
+                vm.setQuietHours(true, start, end)
+                dialog = null
+            },
+        )
+        SettingsDialog.CURFEW -> CurfewDialog(
+            places = s.places,
+            members = members.filterNot { it.isDemo },
+            onDismiss = { dialog = null },
+            onSave = { placeId, uid, hour, minute ->
+                vm.addCurfew(placeId, uid, hour, minute)
+                dialog = null
+            },
+        )
+        SettingsDialog.RELIABILITY -> ReliabilityDialog(onDismiss = { dialog = null })
         SettingsDialog.PLACE -> AddPlaceDialog(
             onDismiss = { dialog = null },
             onConfirm = { name, radius ->
@@ -463,6 +702,21 @@ fun SettingsScreen(vm: AppViewModel) {
             },
         )
         null -> Unit
+    }
+
+    stockFor?.let { reminder ->
+        TextInputDialog(
+            title = "Tablets of ${reminder.label} left",
+            label = "Number of tablets (leave empty to stop counting)",
+            initial = reminder.stock?.toString().orEmpty(),
+            keyboardType = KeyboardType.Number,
+            allowEmpty = true,
+            onDismiss = { stockFor = null },
+            onConfirm = {
+                vm.setReminderStock(reminder.id, it.toIntOrNull()?.coerceIn(0, 9_999))
+                stockFor = null
+            },
+        )
     }
 }
 
@@ -514,6 +768,7 @@ private fun TextInputDialog(
     keyboardType: KeyboardType = KeyboardType.Text,
     capitalization: KeyboardCapitalization = KeyboardCapitalization.None,
     confirmLabel: String = "Save",
+    allowEmpty: Boolean = false,
 ) {
     var value by remember { mutableStateOf(initial) }
     AlertDialog(
@@ -528,7 +783,7 @@ private fun TextInputDialog(
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType, capitalization = capitalization),
             )
         },
-        confirmButton = { TextButton(onClick = { onConfirm(value.trim()) }, enabled = value.isNotBlank()) { Text(confirmLabel) } },
+        confirmButton = { TextButton(onClick = { onConfirm(value.trim()) }, enabled = allowEmpty || value.isNotBlank()) { Text(confirmLabel) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
@@ -623,9 +878,10 @@ private fun MedicalField(label: String, hint: String, value: String, onChange: (
 }
 
 @Composable
-private fun AddReminderDialog(onDismiss: () -> Unit, onSave: (String, Int, Int, ReminderType) -> Unit) {
+private fun AddReminderDialog(onDismiss: () -> Unit, onSave: (String, Int, Int, ReminderType, Int?) -> Unit) {
     var type by remember { mutableStateOf(ReminderType.MEDICINE) }
     var label by remember { mutableStateOf("") }
+    var stock by remember { mutableStateOf("") }
     val time = rememberTimePickerState(initialHour = 9, initialMinute = 0, is24Hour = false)
     val finalLabel = label.trim().ifEmpty { if (type == ReminderType.CHECK_IN) "Morning check-in" else "" }
     AlertDialog(
@@ -647,9 +903,20 @@ private fun AddReminderDialog(onDismiss: () -> Unit, onSave: (String, Int, Int, 
                     modifier = Modifier.fillMaxWidth(),
                 )
                 TimeInput(state = time)
+                if (type == ReminderType.MEDICINE) {
+                    OutlinedTextField(
+                        value = stock,
+                        onValueChange = { v -> stock = v.filter { it.isDigit() }.take(4) },
+                        label = { Text("Tablets left (optional)") },
+                        supportingText = { Text("Counts down with each “Taken” and warns at ${ActionReceiver.REFILL_AT}") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Text(
                     if (type == ReminderType.MEDICINE) {
-                        "Tapping “Taken” on the reminder lets your family know."
+                        "Tapping “Taken” on the reminder lets your family know. If it isn't tapped within 45 minutes, you're reminded again and your family is told."
                     } else {
                         "One tap on the reminder tells your family you're OK."
                     },
@@ -659,7 +926,10 @@ private fun AddReminderDialog(onDismiss: () -> Unit, onSave: (String, Int, Int, 
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(finalLabel, time.hour, time.minute, type) }, enabled = finalLabel.isNotEmpty()) {
+            TextButton(
+                onClick = { onSave(finalLabel, time.hour, time.minute, type, if (type == ReminderType.MEDICINE) stock.toIntOrNull() else null) },
+                enabled = finalLabel.isNotEmpty(),
+            ) {
                 Text("Save")
             }
         },

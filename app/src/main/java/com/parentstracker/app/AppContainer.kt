@@ -9,9 +9,15 @@ import com.parentstracker.app.data.LocalOnlyBackend
 import com.parentstracker.app.data.SettingsStore
 import com.parentstracker.app.location.LocationSharingService
 import com.parentstracker.app.location.LocationTracker
+import com.parentstracker.app.location.SafetySensorMonitor
+import com.parentstracker.app.notify.ActionReceiver
 import com.parentstracker.app.notify.AlertMonitor
+import com.parentstracker.app.notify.Notifications
 import com.parentstracker.app.notify.ReminderScheduler
+import com.parentstracker.app.notify.SafetyCheck
+import com.parentstracker.app.util.Speaker
 import com.parentstracker.app.widget.QuickActionsWidget
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,12 +36,42 @@ class AppContainer(private val context: Context) {
     val cloud: CloudBackend = createCloudBackend(context)
     val repository = FamilyRepository(appScope, settings, cloud, tracker)
     val reminderScheduler = ReminderScheduler(context)
+    val speaker = Speaker(context)
+    val safetyCheck = SafetyCheck(context, repository, reminderScheduler)
     private val alertMonitor = AlertMonitor(context, repository)
+    private val sensorMonitor = SafetySensorMonitor(
+        context,
+        onShake = { appScope.launch { safetyCheck.start(SafetyCheck.Reason.SHAKE) } },
+        onFall = { appScope.launch { safetyCheck.start(SafetyCheck.Reason.FALL) } },
+    )
     private val inForeground = MutableStateFlow(false)
 
     fun start() {
         repository.start()
         alertMonitor.start(appScope)
+        // Shake-to-SOS and fall detection listen to the accelerometer only while switched on.
+        appScope.launch {
+            repository.settingsState.filterNotNull().map { it.shakeToSos to it.fallDetection }.distinctUntilChanged().collect { (shake, fall) ->
+                withContext(Dispatchers.Main) { sensorMonitor.update(shake, fall) }
+            }
+        }
+        // "Going somewhere": ask "Did you reach …?" at the expected time; clear the alarms when the trip ends.
+        appScope.launch {
+            repository.settingsState.filterNotNull().map { it.journey }.distinctUntilChanged().collect { journey ->
+                when {
+                    journey == null -> {
+                        reminderScheduler.cancel(ActionReceiver.journeyDue(context))
+                        reminderScheduler.cancel(ActionReceiver.journeyGrace(context))
+                        Notifications.cancel(context, Notifications.JOURNEY_ID)
+                    }
+                    // A trip already past its time (app restarted) keeps the alarms it already has.
+                    journey.dueAt > System.currentTimeMillis() -> {
+                        reminderScheduler.cancel(ActionReceiver.journeyGrace(context))
+                        reminderScheduler.scheduleAt(journey.dueAt, ActionReceiver.journeyDue(context))
+                    }
+                }
+            }
+        }
         // Start the sharing service whenever it's needed and the app is on screen
         // (Android only lets location services start from the foreground).
         appScope.launch {
